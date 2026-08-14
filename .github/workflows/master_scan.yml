@@ -31,5 +31,5 @@ jobs:
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
           WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
-          TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL }}
+          TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
           PORTFOLIO_POSITIONS_JSON: ${{ secrets.PORTFOLIO_POSITIONS_JSON }}
