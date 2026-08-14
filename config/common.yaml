@@ -4,7 +4,7 @@ mode: parity
 dry_run: true
 persist_snapshots: true
 send_email: true
-send_whatsapp: false
+send_whatsapp: true
 real_orders_enabled: false
 max_position_size: 2500
 trading_capital: 0
