@@ -1,4 +1,5 @@
 name: Master Scan v2 - PARITY
+
 on:
   workflow_dispatch:
     inputs:
@@ -6,30 +7,65 @@ on:
         description: Market
         required: true
         type: choice
-        options: [usa, italy]
-# Schedules intentionally disabled during Phase A parity testing.
-# Enable only after OLD vs NEW tests pass.
+        options:
+          - usa
+          - italy
+
+# Phase A:
+# - solo avvio manuale
+# - nessun cron automatico
+# - prima test, poi scan
+# - OLD vs NEW ancora in validazione
+
 jobs:
   scan:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: '3.11'}
-      - run: pip install -r requirements.txt
-      - uses: actions/cache@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore / save parity data
+        uses: actions/cache@v4
         with:
           path: data
           key: v2-parity-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             v2-parity-${{ runner.os }}-
-      - run: pytest -q
-      - run: python -m monitor.master_scan --market ${{ inputs.market }}
+
+      - name: Run test suite
+        run: pytest -q
+
+      - name: Show runtime configuration
+        run: |
+          echo "MARKET=${{ inputs.market }}"
+          echo "TRADING_CAPITAL=${TRADING_CAPITAL:-MISSING}"
+          echo "GMAIL_SENDER configured: ${{ secrets.GMAIL_SENDER != '' }}"
+          echo "GMAIL_RECIPIENT configured: ${{ secrets.GMAIL_RECIPIENT != '' }}"
+          echo "GMAIL_PASSWORD configured: ${{ secrets.GMAIL_PASSWORD != '' }}"
+          echo "WHATSAPP_NUMBER configured: ${{ secrets.WHATSAPP_NUMBER != '' }}"
+          echo "CALLMEBOT_APIKEY configured: ${{ secrets.CALLMEBOT_APIKEY != '' }}"
+        env:
+          TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
+
+      - name: Run Master Scan
+        run: python -m monitor.master_scan --market ${{ inputs.market }}
         env:
           GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
           GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
+
           WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+
           TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
+
           PORTFOLIO_POSITIONS_JSON: ${{ secrets.PORTFOLIO_POSITIONS_JSON }}
