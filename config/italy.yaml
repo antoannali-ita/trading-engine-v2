@@ -1,0 +1,29 @@
+market: ITALY
+reference_module: reference.italy_v1_2
+currency: EUR
+benchmark: FTSE_MIB
+yfinance_suffix: .MI
+timezone: Europe/Rome
+market_open: "09:00"
+market_close: "17:30"
+commission_per_side: 19
+min_price: 1
+min_market_cap: 200000000
+min_avg_dollar_volume: 2000000
+min_avg_dollar_volume_soft: 750000
+min_score_watch: 56
+min_score_buy: 72
+min_net_rr_normal: 2.0
+min_net_rr_caution: 2.5
+min_net_rr_riskoff: 3.0
+min_net_rr_tp1: 1.35
+max_limit_distance_pct: 3.0
+max_limit_distance_atr: 1.0
+score_marginal_gap: 2
+db_path: data/italy_trading_forward_test.db
+snapshot_dir: data/italy_snapshots
+# Italy v1.2 baseline does not contain the USA v5.5 PRE-BUY engine.
+# Keep false during parity phase; enable only as an explicit Phase-B change.
+prebuy_enabled: false
+gem_filter_enabled: true
+financial_sector_adjustment: true

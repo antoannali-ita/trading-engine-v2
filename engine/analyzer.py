@@ -1,0 +1,72 @@
+from __future__ import annotations
+import importlib, os
+from typing import Any, Dict, List, Tuple
+from engine.models import AnalysisResult
+from engine.market_rules import presentation_state, prebuy_enabled
+
+ENV_MAP = {
+    "commission_per_side":"COMMISSION_PER_SIDE", "min_price":"MIN_PRICE",
+    "min_market_cap":"MIN_MARKET_CAP", "min_avg_dollar_volume":"MIN_AVG_DOLLAR_VOLUME",
+    "min_avg_dollar_volume_soft":"MIN_AVG_DOLLAR_VOLUME_SOFT", "min_score_watch":"MIN_SCORE_WATCH",
+    "min_score_buy":"MIN_SCORE_BUY", "min_net_rr_normal":"MIN_NET_RR_NORMAL",
+    "min_net_rr_caution":"MIN_NET_RR_CAUTION", "min_net_rr_riskoff":"MIN_NET_RR_RISKOFF",
+    "min_net_rr_tp1":"MIN_NET_RR_TP1", "max_limit_distance_pct":"MAX_LIMIT_DISTANCE_PCT",
+    "max_limit_distance_atr":"MAX_LIMIT_DISTANCE_ATR", "score_marginal_gap":"SCORE_MARGINAL_GAP",
+    "db_path":"__DB_PATH_NOT_ENV__", "snapshot_dir":"__SNAPSHOT_DIR_NOT_ENV__",
+}
+
+def load_reference(cfg: Dict[str, Any]):
+    # Set strategy env vars before import because baselines read configuration at module import time.
+    for key, env in ENV_MAP.items():
+        if env.startswith("__"): continue
+        if key in cfg and cfg[key] is not None:
+            os.environ[env] = str(cfg[key])
+    return importlib.import_module(cfg["reference_module"])
+
+def normalize_candidate(reference, market: str, c: Dict[str, Any], cfg: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    c=dict(c)
+    cfg = cfg or {"market": market, "prebuy_enabled": market.upper() == "USA"}
+    # Phase-A boundary guardrail: do not silently add USA PRE-BUY semantics to Italy.
+    c["display_state"] = presentation_state(reference, cfg, c)
+    if prebuy_enabled(cfg) and hasattr(reference,"prebuy_engine"):
+        c.update(reference.prebuy_engine(c))
+    return c
+
+def run_full_scan(cfg: Dict[str, Any], persist: bool=True) -> Dict[str, Any]:
+    reference=load_reference(cfg)
+    if hasattr(reference,"italian_market_session_status"):
+        s=reference.italian_market_session_status()
+        enforce=getattr(reference,"ENFORCE_MARKET_SESSION",False)
+        force=getattr(reference,"FORCE_RUN_OUTSIDE_SESSION",False)
+        if enforce and not force and not s.get("market_session_open"):
+            return {"market":cfg["market"],"skipped":True,"skip_reason":"market_closed","session":s,"selected":[],"candidates":[]}
+    reference.init_db()
+    history=reference.history_health()
+    previous=set(reference.get_previous_selected_tickers())
+    regime=reference.market_regime_engine()
+    regime.update(reference.portfolio_heat_engine())
+    regime.update(history)
+    df, removed=reference.run_tradingview_discovery()
+    if df.empty:
+        return {"market":cfg["market"],"skipped":False,"regime":regime,"selected":[],"candidates":[],"rejected":[],"removed_fields":removed,"dropped":[]}
+    candidates=reference.build_candidates(df, regime)
+    selected,rejected=reference.select_ranked(candidates)
+    actionable=[c for c in selected if c.get("decision") in {"BUY_NOW","BUY_LIMIT"}]
+    if len(actionable)>regime["max_new_buys"]:
+        allowed={c["ticker"] for c in actionable[:regime["max_new_buys"]]}
+        for c in selected:
+            if c.get("decision") in {"BUY_NOW","BUY_LIMIT"} and c["ticker"] not in allowed:
+                c["decision"]="WAIT"; c.setdefault("veto_reasons",[]).append("Cap nuovi BUY imposto dal Market Regime")
+    reference.attach_history_states(candidates)
+    selected=[normalize_candidate(reference,cfg["market"],c,cfg) for c in selected]
+    current={c["ticker"] for c in selected}; dropped=sorted(previous-current)
+    run_id=None; json_path=None
+    if persist:
+        from datetime import datetime, timezone
+        run_id=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        json_path=str(reference.save_run(run_id,regime,candidates,selected,removed,dropped))
+    return {"market":cfg["market"],"skipped":False,"reference":reference,"regime":regime,"selected":selected,"candidates":candidates,"rejected":rejected,"removed_fields":removed,"dropped":dropped,"run_id":run_id,"json_path":json_path}
+
+def analyze_ticker_from_candidate(cfg: Dict[str,Any], candidate: Dict[str,Any]) -> AnalysisResult:
+    reference=load_reference(cfg)
+    return AnalysisResult.from_candidate(cfg["market"], normalize_candidate(reference,cfg["market"],candidate,cfg))

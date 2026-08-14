@@ -1,0 +1,23 @@
+project: trading-engine-v2
+mode: parity
+# Phase A: no strategic changes. The reference monoliths remain the oracle.
+dry_run: true
+persist_snapshots: true
+send_email: true
+send_whatsapp: false
+real_orders_enabled: false
+max_position_size: 2500
+trading_capital: 0
+risk_pct_per_trade: 0.0075
+max_portfolio_heat: 0.05
+max_sector_exposure: 0.30
+smtp_host: smtp.gmail.com
+smtp_port: 587
+whatsapp_provider: callmebot
+# Secrets are read from environment/GitHub Secrets, never committed.
+secrets:
+  gmail_sender: GMAIL_SENDER
+  gmail_recipient: GMAIL_RECIPIENT
+  gmail_password: GMAIL_PASSWORD
+  whatsapp_number: WHATSAPP_NUMBER
+  callmebot_apikey: CALLMEBOT_APIKEY
