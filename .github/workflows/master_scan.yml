@@ -1,6 +1,7 @@
 name: Master Scan v2 - PARITY
 
 on:
+  # Avvio manuale
   workflow_dispatch:
     inputs:
       market:
@@ -11,28 +12,45 @@ on:
           - usa
           - italy
 
-# Phase A:
-# - solo avvio manuale
-# - nessun cron automatico
-# - prima test, poi scan
-# - OLD vs NEW ancora in validazione
+  # GitHub Actions usa UTC
+  schedule:
+    # ITALIA
+    # 15:40 UTC = 17:40 Italia durante CEST
+    - cron: '40 15 * * 1-5'
+
+    # USA
+    # 17:00 UTC = 19:00 Italia durante CEST
+    - cron: '0 17 * * 1-5'
 
 jobs:
   scan:
     runs-on: ubuntu-latest
 
     steps:
+
+      # ---------------------------------------------------------
+      # 1. CHECKOUT
+      # ---------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ---------------------------------------------------------
+      # 2. PYTHON
+      # ---------------------------------------------------------
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
+      # ---------------------------------------------------------
+      # 3. DIPENDENZE
+      # ---------------------------------------------------------
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # ---------------------------------------------------------
+      # 4. CACHE DATI / STATO
+      # ---------------------------------------------------------
       - name: Restore / save parity data
         uses: actions/cache@v4
         with:
@@ -41,23 +59,113 @@ jobs:
           restore-keys: |
             v2-parity-${{ runner.os }}-
 
+      # ---------------------------------------------------------
+      # 5. TEST
+      # Se falliscono, NON viene eseguito alcuno scan
+      # ---------------------------------------------------------
       - name: Run test suite
         run: pytest -q
 
-      - name: Show runtime configuration
+      # ---------------------------------------------------------
+      # 6. DETERMINAZIONE MERCATO
+      #
+      # Manuale:
+      # usa / italy scelto dall'utente
+      #
+      # Cron:
+      # 15:40 UTC -> ITALY
+      # 17:00 UTC -> USA
+      # ---------------------------------------------------------
+      - name: Determine market
+        id: market
+        shell: bash
         run: |
-          echo "MARKET=${{ inputs.market }}"
-          echo "TRADING_CAPITAL=${TRADING_CAPITAL:-MISSING}"
-          echo "GMAIL_SENDER configured: ${{ secrets.GMAIL_SENDER != '' }}"
-          echo "GMAIL_RECIPIENT configured: ${{ secrets.GMAIL_RECIPIENT != '' }}"
-          echo "GMAIL_PASSWORD configured: ${{ secrets.GMAIL_PASSWORD != '' }}"
-          echo "WHATSAPP_NUMBER configured: ${{ secrets.WHATSAPP_NUMBER != '' }}"
-          echo "CALLMEBOT_APIKEY configured: ${{ secrets.CALLMEBOT_APIKEY != '' }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+
+            MARKET="${{ inputs.market }}"
+
+          elif [ "${{ github.event.schedule }}" = "40 15 * * 1-5" ]; then
+
+            MARKET="italy"
+
+          elif [ "${{ github.event.schedule }}" = "0 17 * * 1-5" ]; then
+
+            MARKET="usa"
+
+          else
+
+            echo "Unable to determine market."
+            exit 1
+
+          fi
+
+          echo "market=$MARKET" >> "$GITHUB_OUTPUT"
+          echo "Selected market: $MARKET"
+
+      # ---------------------------------------------------------
+      # 7. CONTROLLO CONFIGURAZIONE
+      #
+      # Non stampa password/APIKEY.
+      # Mostra solo se i secret sono presenti.
+      # ---------------------------------------------------------
+      - name: Show runtime configuration
+        shell: bash
         env:
           TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
 
+          GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
+          GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
+          GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
+
+          WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+
+        run: |
+          echo "----------------------------------------"
+          echo "Trading Engine v2 - Runtime"
+          echo "----------------------------------------"
+
+          echo "MARKET=${{ steps.market.outputs.market }}"
+          echo "TRADING_CAPITAL=${TRADING_CAPITAL:-MISSING}"
+
+          if [ -n "$GMAIL_SENDER" ]; then
+            echo "GMAIL_SENDER=CONFIGURED"
+          else
+            echo "GMAIL_SENDER=MISSING"
+          fi
+
+          if [ -n "$GMAIL_RECIPIENT" ]; then
+            echo "GMAIL_RECIPIENT=CONFIGURED"
+          else
+            echo "GMAIL_RECIPIENT=MISSING"
+          fi
+
+          if [ -n "$GMAIL_PASSWORD" ]; then
+            echo "GMAIL_PASSWORD=CONFIGURED"
+          else
+            echo "GMAIL_PASSWORD=MISSING"
+          fi
+
+          if [ -n "$WHATSAPP_NUMBER" ]; then
+            echo "WHATSAPP_NUMBER=CONFIGURED"
+          else
+            echo "WHATSAPP_NUMBER=MISSING"
+          fi
+
+          if [ -n "$CALLMEBOT_APIKEY" ]; then
+            echo "CALLMEBOT_APIKEY=CONFIGURED"
+          else
+            echo "CALLMEBOT_APIKEY=MISSING"
+          fi
+
+          echo "----------------------------------------"
+
+      # ---------------------------------------------------------
+      # 8. MASTER SCAN
+      # ---------------------------------------------------------
       - name: Run Master Scan
-        run: python -m monitor.master_scan --market ${{ inputs.market }}
+        shell: bash
+
         env:
           GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
           GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
@@ -69,3 +177,11 @@ jobs:
           TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
 
           PORTFOLIO_POSITIONS_JSON: ${{ secrets.PORTFOLIO_POSITIONS_JSON }}
+
+        run: |
+          echo "Starting MASTER_SCAN for ${{ steps.market.outputs.market }}"
+
+          python -m monitor.master_scan \
+            --market "${{ steps.market.outputs.market }}"
+
+          echo "MASTER_SCAN completed."
