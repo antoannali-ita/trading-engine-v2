@@ -1,6 +1,7 @@
-name: Fast Monitor v2 - PARITY
+name: Fast Monitor v2
 
 on:
+  # Avvio manuale per test/emergenze
   workflow_dispatch:
     inputs:
       market:
@@ -10,145 +11,66 @@ on:
         options:
           - usa
           - italy
+          - both
+        default: both
 
-# Phase A / PARITY
-#
-# Per ora:
-# - solo avvio manuale
-# - nessun cron automatico
-# - nessun ordine reale
-# - WhatsApp utilizzato solo per alert / test
-#
-# Il cron ogni 5 minuti verrà attivato solo dopo
-# la validazione del Fast Monitor.
+  # GitHub cron usa UTC.
+  #
+  # Finestra complessiva che copre:
+  # ITALIA: 09:00-17:30 Europe/Rome
+  # USA:    09:30-16:00 America/New_York
+  #
+  # Il workflow parte ogni 5 minuti.
+  # market/session.py decide se ciascun mercato
+  # è effettivamente aperto.
+  schedule:
+    - cron: '*/5 7-21 * * 1-5'
+
+concurrency:
+  group: fast-monitor-v2
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
-  monitor:
+
+  # ============================================================
+  # ITALIA
+  # ============================================================
+  italy:
+    name: Fast Monitor ITALY
     runs-on: ubuntu-latest
+
+    # Automatico oppure manuale con italy/both
+    if: >
+      github.event_name == 'schedule' ||
+      github.event.inputs.market == 'italy' ||
+      github.event.inputs.market == 'both'
 
     steps:
 
-      # ---------------------------------------------------------
-      # 1. CHECKOUT
-      # ---------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ---------------------------------------------------------
-      # 2. PYTHON
-      # ---------------------------------------------------------
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
-      # ---------------------------------------------------------
-      # 3. DIPENDENZE
-      # ---------------------------------------------------------
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # ---------------------------------------------------------
-      # 4. CACHE DATI / STATO
-      #
-      # Serve per mantenere:
-      # - snapshot
-      # - storico
-      # - State Manager
-      # - ultima situazione monitorata
-      # ---------------------------------------------------------
-      - name: Restore / save Fast Monitor data
+      - name: Restore Fast Monitor state
         uses: actions/cache@v4
         with:
           path: data
-          key: v2-fast-${{ runner.os }}-${{ github.run_id }}
+          key: v2-fast-italy-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
-            v2-fast-${{ runner.os }}-
+            v2-fast-italy-${{ runner.os }}-
 
-      # ---------------------------------------------------------
-      # 5. TEST
-      #
-      # Se i test falliscono, il Fast Monitor NON parte.
-      # ---------------------------------------------------------
-      - name: Run test suite
-        run: pytest -q
-
-      # ---------------------------------------------------------
-      # 6. CONFIG CHECK
-      #
-      # Non stampa numero o API key.
-      # Controlla soltanto se sono presenti.
-      # ---------------------------------------------------------
-      - name: Check Fast Monitor configuration
-        shell: bash
-        env:
-          WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
-          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
-          TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
-
-        run: |
-          echo "----------------------------------------"
-          echo "Trading Engine v2 - FAST MONITOR"
-          echo "----------------------------------------"
-
-          echo "MARKET=${{ inputs.market }}"
-          echo "TRADING_CAPITAL=${TRADING_CAPITAL:-MISSING}"
-
-          if [ -n "$WHATSAPP_NUMBER" ]; then
-            echo "WHATSAPP_NUMBER=CONFIGURED"
-          else
-            echo "WHATSAPP_NUMBER=MISSING"
-          fi
-
-          if [ -n "$CALLMEBOT_APIKEY" ]; then
-            echo "CALLMEBOT_APIKEY=CONFIGURED"
-          else
-            echo "CALLMEBOT_APIKEY=MISSING"
-          fi
-
-          echo "----------------------------------------"
-
-      # ---------------------------------------------------------
-      # 7. TEST WHATSAPP
-      #
-      # TEMPORANEO durante il collaudo.
-      # Deve inviare un messaggio ad ogni avvio manuale.
-      #
-      # Dopo aver verificato che CallMeBot funziona,
-      # questo step andrà rimosso.
-      # ---------------------------------------------------------
-      - name: Test WhatsApp
-        env:
-          WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
-          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
-
-        run: |
-          python - <<'PY'
-
-          from notifications.whatsapp_client import send_whatsapp
-
-          message = (
-              "✅ Trading Engine v2\n"
-              "FAST MONITOR WhatsApp TEST riuscito\n"
-              "Market: ${{ inputs.market }}"
-          )
-
-          result = send_whatsapp(message)
-
-          print("WhatsApp send result:", result)
-
-          if result is False:
-              raise SystemExit("WhatsApp test failed")
-
-          PY
-
-      # ---------------------------------------------------------
-      # 8. FAST MONITOR
-      #
-      # Controlla solamente ticker già rilevanti.
-      # Non deve rifare il MASTER_SCAN completo.
-      # ---------------------------------------------------------
-      - name: Run Fast Monitor
+      - name: Run Fast Monitor ITALY
         env:
           WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
@@ -158,9 +80,66 @@ jobs:
           PORTFOLIO_POSITIONS_JSON: ${{ secrets.PORTFOLIO_POSITIONS_JSON }}
 
         run: |
-          echo "Starting FAST_MONITOR for ${{ inputs.market }}"
+          echo "========================================"
+          echo "Trading Engine v2"
+          echo "FAST MONITOR - ITALY"
+          echo "========================================"
 
-          python -m monitor.fast_monitor \
-            --market "${{ inputs.market }}"
+          python -m monitor.fast_monitor --market italy
 
-          echo "FAST_MONITOR completed successfully."
+          echo "ITALY Fast Monitor completed."
+
+
+  # ============================================================
+  # USA
+  # ============================================================
+  usa:
+    name: Fast Monitor USA
+    runs-on: ubuntu-latest
+
+    # Automatico oppure manuale con usa/both
+    if: >
+      github.event_name == 'schedule' ||
+      github.event.inputs.market == 'usa' ||
+      github.event.inputs.market == 'both'
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore Fast Monitor state
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: v2-fast-usa-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            v2-fast-usa-${{ runner.os }}-
+
+      - name: Run Fast Monitor USA
+        env:
+          WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+
+          TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
+
+          PORTFOLIO_POSITIONS_JSON: ${{ secrets.PORTFOLIO_POSITIONS_JSON }}
+
+        run: |
+          echo "========================================"
+          echo "Trading Engine v2"
+          echo "FAST MONITOR - USA"
+          echo "========================================"
+
+          python -m monitor.fast_monitor --market usa
+
+          echo "USA Fast Monitor completed."
