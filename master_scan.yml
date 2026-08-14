@@ -1,0 +1,35 @@
+name: Master Scan v2 - PARITY
+on:
+  workflow_dispatch:
+    inputs:
+      market:
+        description: Market
+        required: true
+        type: choice
+        options: [usa, italy]
+# Schedules intentionally disabled during Phase A parity testing.
+# Enable only after OLD vs NEW tests pass.
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install -r requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: data
+          key: v2-parity-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            v2-parity-${{ runner.os }}-
+      - run: pytest -q
+      - run: python -m monitor.master_scan --market ${{ inputs.market }}
+        env:
+          GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
+          GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
+          GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
+          WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+          TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL }}
+          PORTFOLIO_POSITIONS_JSON: ${{ secrets.PORTFOLIO_POSITIONS_JSON }}

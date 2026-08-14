@@ -1,0 +1,27 @@
+name: Fast Monitor v2 - PARITY
+on:
+  workflow_dispatch:
+    inputs:
+      market:
+        required: true
+        type: choice
+        options: [usa, italy]
+# Cron every 5 minutes intentionally NOT active during Phase A.
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install -r requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: data
+          key: v2-fast-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            v2-fast-${{ runner.os }}-
+      - run: python -m monitor.fast_monitor --market ${{ inputs.market }}
+        env:
+          WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
