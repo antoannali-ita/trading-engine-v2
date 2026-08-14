@@ -1,27 +1,166 @@
 name: Fast Monitor v2 - PARITY
+
 on:
   workflow_dispatch:
     inputs:
       market:
+        description: Market
         required: true
         type: choice
-        options: [usa, italy]
-# Cron every 5 minutes intentionally NOT active during Phase A.
+        options:
+          - usa
+          - italy
+
+# Phase A / PARITY
+#
+# Per ora:
+# - solo avvio manuale
+# - nessun cron automatico
+# - nessun ordine reale
+# - WhatsApp utilizzato solo per alert / test
+#
+# Il cron ogni 5 minuti verrà attivato solo dopo
+# la validazione del Fast Monitor.
+
 jobs:
   monitor:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: '3.11'}
-      - run: pip install -r requirements.txt
-      - uses: actions/cache@v4
+
+      # ---------------------------------------------------------
+      # 1. CHECKOUT
+      # ---------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------
+      # 2. PYTHON
+      # ---------------------------------------------------------
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # ---------------------------------------------------------
+      # 3. DIPENDENZE
+      # ---------------------------------------------------------
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ---------------------------------------------------------
+      # 4. CACHE DATI / STATO
+      #
+      # Serve per mantenere:
+      # - snapshot
+      # - storico
+      # - State Manager
+      # - ultima situazione monitorata
+      # ---------------------------------------------------------
+      - name: Restore / save Fast Monitor data
+        uses: actions/cache@v4
         with:
           path: data
           key: v2-fast-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             v2-fast-${{ runner.os }}-
-      - run: python -m monitor.fast_monitor --market ${{ inputs.market }}
+
+      # ---------------------------------------------------------
+      # 5. TEST
+      #
+      # Se i test falliscono, il Fast Monitor NON parte.
+      # ---------------------------------------------------------
+      - name: Run test suite
+        run: pytest -q
+
+      # ---------------------------------------------------------
+      # 6. CONFIG CHECK
+      #
+      # Non stampa numero o API key.
+      # Controlla soltanto se sono presenti.
+      # ---------------------------------------------------------
+      - name: Check Fast Monitor configuration
+        shell: bash
         env:
           WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+          TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
+
+        run: |
+          echo "----------------------------------------"
+          echo "Trading Engine v2 - FAST MONITOR"
+          echo "----------------------------------------"
+
+          echo "MARKET=${{ inputs.market }}"
+          echo "TRADING_CAPITAL=${TRADING_CAPITAL:-MISSING}"
+
+          if [ -n "$WHATSAPP_NUMBER" ]; then
+            echo "WHATSAPP_NUMBER=CONFIGURED"
+          else
+            echo "WHATSAPP_NUMBER=MISSING"
+          fi
+
+          if [ -n "$CALLMEBOT_APIKEY" ]; then
+            echo "CALLMEBOT_APIKEY=CONFIGURED"
+          else
+            echo "CALLMEBOT_APIKEY=MISSING"
+          fi
+
+          echo "----------------------------------------"
+
+      # ---------------------------------------------------------
+      # 7. TEST WHATSAPP
+      #
+      # TEMPORANEO durante il collaudo.
+      # Deve inviare un messaggio ad ogni avvio manuale.
+      #
+      # Dopo aver verificato che CallMeBot funziona,
+      # questo step andrà rimosso.
+      # ---------------------------------------------------------
+      - name: Test WhatsApp
+        env:
+          WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+
+        run: |
+          python - <<'PY'
+
+          from notifications.whatsapp_client import send_whatsapp
+
+          message = (
+              "✅ Trading Engine v2\n"
+              "FAST MONITOR WhatsApp TEST riuscito\n"
+              "Market: ${{ inputs.market }}"
+          )
+
+          result = send_whatsapp(message)
+
+          print("WhatsApp send result:", result)
+
+          if result is False:
+              raise SystemExit("WhatsApp test failed")
+
+          PY
+
+      # ---------------------------------------------------------
+      # 8. FAST MONITOR
+      #
+      # Controlla solamente ticker già rilevanti.
+      # Non deve rifare il MASTER_SCAN completo.
+      # ---------------------------------------------------------
+      - name: Run Fast Monitor
+        env:
+          WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+
+          TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
+
+          PORTFOLIO_POSITIONS_JSON: ${{ secrets.PORTFOLIO_POSITIONS_JSON }}
+
+        run: |
+          echo "Starting FAST_MONITOR for ${{ inputs.market }}"
+
+          python -m monitor.fast_monitor \
+            --market "${{ inputs.market }}"
+
+          echo "FAST_MONITOR completed successfully."
