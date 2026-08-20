@@ -1,0 +1,52 @@
+name: Strategy Lab Daily Opportunity Feed
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 21 * * 1-5"
+
+permissions:
+  contents: read
+
+jobs:
+  paper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: ${{ github.workspace }}/laboratory/src
+    steps:
+      - name: Checkout strategy lab branch
+        uses: actions/checkout@v4
+        with:
+          ref: strategy-lab-v1
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: laboratory/requirements.txt
+
+      - name: Install
+        working-directory: laboratory
+        run: pip install -r requirements.txt
+
+      - name: Unit tests
+        working-directory: laboratory
+        run: pytest -q tests
+
+      - name: Generate opportunity ladder and paper feed
+        working-directory: laboratory
+        env:
+          LAB_SYMBOLS: "SPY,QQQ,AAPL,MSFT,NVDA,AMZN,GOOGL,META,AVGO,AMD,JPM,GS,AXP,PGR,V,MA,UNH,LLY,NVO,CVS,COST,WMT,HD,CAT,GE,RTX,XOM,CVX,ADBE,CRM,ORCL,NFLX,FTNT,MUFG,TSM,ASML,BKNG,UBER,PANW,LIN"
+          LAB_WATCH_SCORE: "55"
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python jobs/run_paper_signals.py
+
+      - name: Update signal outcomes D1-D60 MFE MAE
+        working-directory: laboratory
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python jobs/run_signal_outcomes.py
