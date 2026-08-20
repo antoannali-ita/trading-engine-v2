@@ -1,0 +1,58 @@
+name: Lab Research
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Comma-separated symbols"
+        required: false
+        default: "SPY,QQQ,AAPL,MSFT,NVDA,PGR,AXP,CVS,ADBE,NVO"
+      start:
+        description: "Backtest start date"
+        required: false
+        default: "2020-01-01"
+  schedule:
+    - cron: "30 6 * * 6"
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: laboratory
+    env:
+      LAB_SYMBOLS: ${{ github.event.inputs.symbols || 'SPY,QQQ,AAPL,MSFT,NVDA,PGR,AXP,CVS,ADBE,NVO' }}
+      LAB_START: ${{ github.event.inputs.start || '2020-01-01' }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: laboratory/requirements.txt
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Unit tests
+        run: pytest -q tests
+
+      - name: Run lab backtests
+        run: python jobs/run_lab.py
+
+      - name: Upload research artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab-research-${{ github.run_id }}
+          path: laboratory/results/
+          retention-days: 30
