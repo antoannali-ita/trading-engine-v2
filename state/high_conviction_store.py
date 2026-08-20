@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import math
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, Iterable, Optional
 
 
@@ -9,7 +10,8 @@ def _num(value: Any) -> Optional[float]:
     try:
         if value is None:
             return None
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     except Exception:
         return None
 
@@ -19,6 +21,30 @@ def _text(value: Any) -> Optional[str]:
         return None
     s = str(value).strip()
     return s or None
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    try:
+        item = value.item()
+        return _json_safe(item)
+    except Exception:
+        pass
+    try:
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+    except Exception:
+        pass
+    return str(value)
 
 
 def _company_name(c: Dict[str, Any]) -> Optional[str]:
@@ -45,8 +71,6 @@ def classify_high_conviction(market: str, c: Dict[str, Any]) -> Optional[str]:
         return None
 
     if m == "italy":
-        # Italy keeps its own engine semantics. These are existing high-priority
-        # operational states, merely presented under one dashboard label.
         if operational in {"READY_FOR_TRIGGER", "SCORE_MARGINAL"}:
             return "PRE-BUY HIGH"
         return None
@@ -86,13 +110,13 @@ def _payload(run_id: str, market: str, c: Dict[str, Any], signal_class: str) -> 
         "gross_rr_tp2": _num(c.get("gross_rr_tp2")),
         "net_rr_tp2": _num(c.get("net_rr_tp2", c.get("rr_net_tp2"))),
         "trigger": _text(c.get("trigger_state", c.get("trigger"))),
-        "missing_gates": failed,
+        "missing_gates": _json_safe(failed),
         "risk_usd": _num(c.get("risk_usd", c.get("position_risk_usd"))),
         "risk_pct": _num(c.get("risk_pct", c.get("position_risk_pct"))),
         "coverage_pct": _num(c.get("data_coverage_pct", c.get("coverage_pct"))),
         "change_state": _text(c.get("change_state")),
         "active": True,
-        "payload": c,
+        "payload": _json_safe(c),
     }
 
 
@@ -118,7 +142,7 @@ def persist_high_conviction(run_id: Optional[str], market: str, selected: Iterab
 
     try:
         db = create_client(url, key)
-        # Only the newest run for this market is active. History is preserved.
+        # History is preserved; only the latest successful snapshot per market remains active.
         db.table("core_high_conviction_signals").update({"active": False}).eq("market", market_norm).eq("active", True).execute()
         if rows:
             db.table("core_high_conviction_signals").upsert(rows, on_conflict="run_id,market,ticker").execute()
