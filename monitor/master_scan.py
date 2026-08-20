@@ -8,6 +8,7 @@ import yaml
 from engine.analyzer import run_full_scan
 from monitor.supabase_persistence import persist_scan
 from notifications.email_client import send_email
+from state.high_conviction_store import persist_high_conviction
 
 
 def load_cfg(market):
@@ -15,6 +16,19 @@ def load_cfg(market):
     common = yaml.safe_load((root / "config/common.yaml").read_text()) or {}
     specific = yaml.safe_load((root / f"config/{market.lower()}.yaml").read_text()) or {}
     return {**common, **specific}
+
+
+def _enrich_presentation_fields(market: str, ref, selected):
+    enriched = []
+    for original in selected:
+        c = dict(original)
+        if market == "usa" and ref is not None and hasattr(ref, "prebuy_engine"):
+            try:
+                c.update(ref.prebuy_engine(c))
+            except Exception as exc:
+                print(f"WARN prebuy enrichment {c.get('ticker')}: {type(exc).__name__}: {exc}")
+        enriched.append(c)
+    return enriched
 
 
 def main():
@@ -30,8 +44,6 @@ def main():
         print(f"SKIP {a.market}: {result.get('skip_reason')} {result.get('session')}")
         return
 
-    # Persist the complete Core candidate set to the Trading Lab database.
-    # This is observational only: no broker orders are created here.
     try:
         persist_scan(result, cfg)
     except Exception as exc:
@@ -39,6 +51,15 @@ def main():
 
     selected = result["selected"]
     ref = result.get("reference")
+
+    if not a.no_persist:
+        hc_selected = _enrich_presentation_fields(a.market, ref, selected)
+        hc = persist_high_conviction(result.get("run_id"), a.market, hc_selected)
+        print(
+            "CORE_HIGH_CONVICTION "
+            f"market={a.market.upper()} written={hc.get('written', 0)} "
+            f"skipped={hc.get('skipped', False)} reason={hc.get('reason') or 'OK'}"
+        )
 
     print(f"{a.market.upper()} candidates={len(result['candidates'])} selected={len(selected)}")
     for c in selected[:5]:
