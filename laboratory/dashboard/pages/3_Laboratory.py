@@ -10,9 +10,11 @@ SRC = LAB_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from lab.auth import require_dashboard_auth
 from lab.data import load_signal_outcomes, load_signals
 
 st.set_page_config(page_title="Trading Lab | Laboratory", layout="wide")
+require_dashboard_auth()
 st.title("Laboratory | Signal Outcomes")
 
 try:
