@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 from itertools import product
 from typing import Any
 
@@ -58,6 +57,26 @@ def _oos_metrics(symbol: str, prices: pd.DataFrame, strategy: str, cfg: Backtest
     return trades, metrics
 
 
+def critique_parent(oos: dict) -> list[str]:
+    """Explain why the parent deserves challengers. No optimization claim is made here."""
+    reasons: list[str] = []
+    n = int(oos.get("trades", 0))
+    ret = float(oos.get("return_pct", 0.0))
+    pf = _finite_pf(oos.get("profit_factor", 0.0))
+    dd = abs(float(oos.get("max_drawdown_pct", 0.0)))
+    if n < 5:
+        reasons.append("OOS_SAMPLE_TOO_SMALL")
+    if ret <= 0:
+        reasons.append("OOS_RETURN_NON_POSITIVE")
+    if pf < 1.15:
+        reasons.append("OOS_PROFIT_FACTOR_WEAK")
+    if dd > 5.0:
+        reasons.append("OOS_DRAWDOWN_HIGH")
+    if not reasons:
+        reasons.append("PARENT_HEALTHY_CHALLENGER_TEST")
+    return reasons
+
+
 def robustness_score(train: dict, oos: dict) -> float:
     """Conservative 0-100 score. OOS dominates; drawdown and sample size matter."""
     oos_ret = float(oos.get("return_pct", 0.0))
@@ -102,12 +121,13 @@ def verdict(parent_oos: dict, child_oos: dict, child_score: float) -> str:
 def evaluate_family(symbol: str, prices: pd.DataFrame, strategy: str) -> list[dict[str, Any]]:
     """Create parameter children around a fixed strategy signal generator.
 
-    This evolves execution/risk parameters only. It deliberately does not rewrite strategy code.
+    Generation 1 evolves execution/risk parameters only. Strategy-code mutation is intentionally excluded.
     """
     train, test, test_start = split_walk_forward(prices)
     parent_cfg = BacktestConfig()
     _, parent_train = run_backtest(symbol, train, strategy, parent_cfg)
     _, parent_oos = _oos_metrics(symbol, test, strategy, parent_cfg, test_start)
+    critique = critique_parent(parent_oos)
 
     rows: list[dict[str, Any]] = []
     for entry_score, stop_mult, target_mult in product(ENTRY_SCORES, STOP_MULTS, TARGET_MULTS):
@@ -133,6 +153,7 @@ def evaluate_family(symbol: str, prices: pd.DataFrame, strategy: str) -> list[di
             "oos": oos_metrics,
             "parent_train": parent_train,
             "parent_oos": parent_oos,
+            "parent_critique": critique,
             "robustness_score": score,
             "verdict": state,
         })
