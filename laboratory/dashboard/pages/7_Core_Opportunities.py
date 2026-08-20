@@ -88,6 +88,21 @@ def _field(row, column: str, *payload_aliases: str):
     return None
 
 
+def _requirements(row) -> dict:
+    payload = _payload(row)
+    value = payload.get("_buy_requirements")
+    return value if isinstance(value, dict) else {}
+
+
+def _num(value):
+    try:
+        if value is None or pd.isna(value):
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
 def tv_url(row, market: str) -> str:
     ticker = str(row.get("ticker") or "").upper()
     payload = _payload(row)
@@ -102,7 +117,97 @@ def tv_url(row, market: str) -> str:
 
 def _missing(row) -> list[str]:
     value = row.get("missing_gates")
+    if isinstance(value, list):
+        return [str(x).strip().lower() for x in value if str(x).strip()]
+    payload = _payload(row)
+    fallback = payload.get("prebuy_missing")
+    return [str(x).strip().lower() for x in fallback] if isinstance(fallback, list) else []
+
+
+def _hard_blockers(row) -> list[str]:
+    value = _payload(row).get("prebuy_hard_blockers")
     return [str(x) for x in value] if isinstance(value, list) else []
+
+
+def _is_missing(missing: list[str], *aliases: str) -> bool:
+    normalized = {x.replace("-", "_").replace(" ", "_") for x in missing}
+    return any(alias.lower().replace("-", "_").replace(" ", "_") in normalized for alias in aliases)
+
+
+def _req_num_text(value, prefix="≥") -> str:
+    number = _num(value)
+    return "N/D" if number is None else f"{prefix}{number:.2f}"
+
+
+def _gate_rows(row, market: str) -> list[dict]:
+    payload = _payload(row)
+    req = _requirements(row)
+    missing = _missing(row)
+
+    score = _num(row.get("opportunity_score"))
+    rr1 = _num(_field(row, "net_rr_tp1", "net_rr_tp1", "rr_net_tp1"))
+    rr2 = _num(_field(row, "net_rr_tp2", "net_rr_tp2", "rr_net_tp2", "net_rr", "rr"))
+    trigger = str(_field(row, "trigger", "trigger_state", "trigger") or "N/D").upper().replace("_", " ")
+    technical = str(payload.get("technical_state") or payload.get("setup_state") or "N/D").replace("_", " ")
+    qty = _num(payload.get("qty") or payload.get("shares"))
+
+    score_min = _num(req.get("score_min"))
+    rr1_min = _num(req.get("rr_tp1_min"))
+    rr2_min = _num(req.get("rr_tp2_min"))
+
+    score_ok = not _is_missing(missing, "score") if score_min is None else score is not None and score >= score_min
+    rr1_ok = not _is_missing(missing, "rr_tp1") if rr1_min is None else rr1 is not None and rr1 >= rr1_min
+    rr2_ok = not _is_missing(missing, "rr_tp2", "rr") if rr2_min is None else rr2 is not None and rr2 >= rr2_min
+    trigger_ok = trigger == str(req.get("trigger_required") or "CONFIRMED").upper().replace("_", " ")
+    structure_ok = not _is_missing(missing, "structure", "technical", "trend")
+    sizing_ok = not _is_missing(missing, "sizing", "size", "qty") and (qty is None or qty > 0)
+
+    return [
+        {"name": "Opportunity Score", "current": fmt_score(score), "requirement": _req_num_text(score_min), "ok": score_ok},
+        {"name": "Net R/R TP1", "current": fmt_rr(rr1), "requirement": _req_num_text(rr1_min), "ok": rr1_ok},
+        {"name": "Net R/R TP2", "current": fmt_rr(rr2), "requirement": _req_num_text(rr2_min), "ok": rr2_ok},
+        {"name": "Trigger", "current": trigger, "requirement": str(req.get("trigger_required") or "CONFIRMED"), "ok": trigger_ok},
+        {"name": "Structure", "current": technical, "requirement": "PASS", "ok": structure_ok},
+        {"name": "Sizing", "current": f"Qty {int(qty)}" if qty is not None else "PASS/N-D", "requirement": "PASS", "ok": sizing_ok},
+    ]
+
+
+def _render_buy_checklist(row, market: str) -> None:
+    gates = _gate_rows(row, market)
+    passed = sum(1 for gate in gates if gate["ok"])
+    total = len(gates)
+    missing_names = [gate["name"] for gate in gates if not gate["ok"]]
+
+    st.markdown("**BUY GATES**")
+    for gate in gates:
+        icon = "✅" if gate["ok"] else "❌"
+        st.markdown(
+            f"{icon} **{gate['name']}:** {html.escape(str(gate['current']))} "
+            f"<span style='opacity:.68'>({html.escape(str(gate['requirement']))})</span>",
+            unsafe_allow_html=True,
+        )
+
+    readiness_color = "#15803d" if passed == total else "#b45309"
+    st.markdown(
+        f"<div style='margin:.45rem 0 .25rem 0;padding:.45rem .6rem;border-radius:8px;"
+        f"background:rgba(128,128,128,.06);font-weight:750'>"
+        f"BUY Readiness: <span style='color:{readiness_color}'>{passed}/{total} gates passed</span></div>",
+        unsafe_allow_html=True,
+    )
+    if missing_names:
+        st.write(f"To become BUY: **{', '.join(missing_names)}**")
+    else:
+        st.write("BUY gate checklist: **PASS**. Final executable state remains the Core decision BUY NOW / BUY LIMIT.")
+
+    blockers = _hard_blockers(row)
+    if blockers:
+        st.error(f"Hard Blockers: {', '.join(blockers)}")
+
+    req = _requirements(row)
+    if not req:
+        st.caption("Reference thresholds are not stored in this older snapshot. They will populate automatically after the next Master Scan.")
+    elif req.get("market_regime"):
+        st.caption(f"Reference thresholds from Core run · Market Regime: {req.get('market_regime')}")
 
 
 def _reason(row) -> str:
@@ -199,16 +304,19 @@ for market in ["USA", "ITALY"]:
                     f"{_money(_field(row, 'tp2', 'tp2', 'target2', 'target', 'proposed_target'), market)}**"
                 )
                 if pd.notna(row.get("prebuy_score")):
-                    st.write(f"PRE-BUY Score: **{int(float(row.get('prebuy_score')))}/10**")
-                if pd.notna(row.get("opportunity_score")):
-                    st.write(f"Opportunity Score: **{fmt_score(row.get('opportunity_score'))}**")
+                    req = _requirements(row)
+                    pb_req = _num(req.get("prebuy_high_min"))
+                    pb_ref = f" (≥{pb_req:.0f}/10 for PRE-BUY HIGH)" if pb_req is not None else ""
+                    st.write(f"PRE-BUY Score: **{int(float(row.get('prebuy_score')))}/10**{pb_ref}")
                 if pd.notna(row.get("quality_score")):
                     st.write(f"Quality Score: **{fmt_score(row.get('quality_score'))}**")
                 st.write(f"Operational: **{row.get('operational_state') or 'N/D'}**")
-                st.write(f"Net R/R TP2: **{fmt_rr(_field(row, 'net_rr_tp2', 'net_rr_tp2', 'rr_net_tp2', 'net_rr', 'rr'))}**")
+
+                st.divider()
+                _render_buy_checklist(row, market)
+
                 missing = _missing(row)
-                st.write(f"Missing Gates: **{', '.join(missing) if missing else 'none'}**")
-                if any("rr" in x.lower() for x in missing):
+                if any("rr" in x for x in missing):
                     st.warning("R/R gate non ancora superato: PRE-BUY HIGH indica readiness elevata, non un BUY eseguibile.")
                 st.info(_reason(row))
                 snapshot = pd.to_datetime(row.get("created_at"), errors="coerce", utc=True)
