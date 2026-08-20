@@ -67,10 +67,31 @@ STRATEGY_INFO = {
 }
 
 
+def _sidebar_navigation() -> None:
+    st.sidebar.markdown("## 📈 Trading Lab")
+    st.sidebar.caption("Decisione · rischio · ricerca")
+    st.sidebar.page_link("app.py", label="🏠  Control Room")
+    st.sidebar.page_link("pages/1_Signals.py", label="🎯  Opportunità")
+    st.sidebar.page_link("pages/5_Action_Center.py", label="⚡  Action Center")
+    st.sidebar.page_link("pages/2_Portfolio.py", label="💼  Portafoglio")
+    st.sidebar.markdown("---")
+    st.sidebar.caption("ANALISI & RICERCA")
+    st.sidebar.page_link("pages/6_Backtest_Research.py", label="🧪  Strategy Lab")
+    st.sidebar.page_link("pages/3_Laboratory.py", label="📊  Signal Outcomes")
+    st.sidebar.page_link("pages/4_Engine_Health.py", label="🩺  Engine Health")
+    st.sidebar.markdown("---")
+    st.sidebar.caption("PAPER / RESEARCH · nessun ordine automatico")
+
+
 def apply_theme() -> None:
     st.markdown(
         """
         <style>
+        [data-testid="stSidebarNav"] {display:none;}
+        [data-testid="stSidebar"] {border-right:1px solid rgba(128,128,128,.14);}
+        [data-testid="stSidebar"] .stPageLink {margin-bottom:.15rem;}
+        [data-testid="stSidebar"] .stPageLink a {border-radius:10px; padding:.48rem .62rem;}
+        [data-testid="stSidebar"] .stPageLink a:hover {background:rgba(99,102,241,.09);}
         .block-container {padding-top: 1.6rem; padding-bottom: 3rem; max-width: 1500px;}
         h1, h2, h3 {letter-spacing: -0.02em;}
         [data-testid="stMetric"] {
@@ -111,6 +132,7 @@ def apply_theme() -> None:
         """,
         unsafe_allow_html=True,
     )
+    _sidebar_navigation()
 
 
 def page_header(title: str, subtitle: str, eyebrow: str = "TRADING LAB 2.0") -> None:
@@ -131,6 +153,8 @@ def strategy_health(profit_factor: Any, trades: Any, return_pct: Any) -> tuple[s
         pf = float(profit_factor)
         n = float(trades)
         ret = float(return_pct)
+        if pd.isna(pf) or pd.isna(n) or pd.isna(ret):
+            return "N/D", "status-na"
     except (TypeError, ValueError):
         return "N/D", "status-na"
     if n >= 80 and pf >= 1.5 and ret > 0:
