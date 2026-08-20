@@ -7,8 +7,8 @@ import pandas as pd
 import streamlit as st
 
 
-UI_BUILD = "2026.08.20-2040"
-COPYRIGHT_TEXT = "Questo sito è stato prodotto da AntonioLaRocca · Tutti i diritti riservati."
+UI_BUILD = "2026.08.20-2045"
+COPYRIGHT_TEXT = "Questo sito è stato prodotto da Antonio Larocca · Tutti i diritti riservati."
 
 STRATEGY_INFO = {
     "trend_continuation": {
@@ -84,7 +84,7 @@ def _sidebar_navigation() -> None:
     st.sidebar.page_link("pages/4_Engine_Health.py", label="🩺  ENGINE HEALTH")
     st.sidebar.markdown("---")
     st.sidebar.caption(f"BUILD {UI_BUILD}")
-    st.sidebar.caption("© 2026 AntonioLaRocca · Tutti i diritti riservati.")
+    st.sidebar.caption("© 2026 Antonio Larocca · Tutti i diritti riservati.")
 
 
 def apply_theme() -> None:
@@ -114,39 +114,18 @@ def apply_theme() -> None:
         .status-bad {background:rgba(239,68,68,.13);}
         .status-na {background:rgba(148,163,184,.16);}
         div[data-testid="stDataFrame"] {border:1px solid rgba(128,128,128,.13); border-radius:14px; overflow:hidden;}
-        .site-footer {
-            position: fixed;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            z-index: 999;
-            padding: .55rem 1rem;
-            text-align: center;
-            font-size: .76rem;
-            opacity: .78;
-            backdrop-filter: blur(10px);
-            background: rgba(250,250,250,.88);
-            border-top: 1px solid rgba(128,128,128,.14);
-        }
-        @media (prefers-color-scheme: dark) {
-            .site-footer {background: rgba(14,17,23,.88);}
-        }
+        .site-footer {position:fixed; left:0; right:0; bottom:0; z-index:999; padding:.55rem 1rem; text-align:center; font-size:.76rem; opacity:.78; backdrop-filter:blur(10px); background:rgba(250,250,250,.88); border-top:1px solid rgba(128,128,128,.14);}
+        @media (prefers-color-scheme: dark) {.site-footer {background:rgba(14,17,23,.88);}}
         </style>
         """,
         unsafe_allow_html=True,
     )
-    st.markdown(
-        f'<div class="site-footer">{html.escape(COPYRIGHT_TEXT)} · © 2026</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(f'<div class="site-footer">{html.escape(COPYRIGHT_TEXT)} · © 2026</div>', unsafe_allow_html=True)
     _sidebar_navigation()
 
 
 def page_header(title: str, subtitle: str, eyebrow: str = "TRADING LAB 2.0") -> None:
-    st.markdown(
-        f'<div class="lab-hero"><div class="lab-eyebrow">{html.escape(str(eyebrow))}</div><div class="lab-title">{html.escape(str(title))}</div><div class="lab-subtitle">{html.escape(str(subtitle))}</div></div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(f'<div class="lab-hero"><div class="lab-eyebrow">{html.escape(str(eyebrow))}</div><div class="lab-title">{html.escape(str(title))}</div><div class="lab-subtitle">{html.escape(str(subtitle))}</div></div>', unsafe_allow_html=True)
 
 
 def _scalar(value: Any) -> Any:
@@ -211,7 +190,6 @@ def strategy_health(profit_factor: Any, trades: Any, return_pct: Any) -> tuple[s
 def render_strategy_card(strategy: str, row: dict[str, Any] | None = None) -> None:
     meta = STRATEGY_INFO.get(strategy, {"label": strategy, "summary": "Descrizione non disponibile.", "signals": [], "best_for": "N/D", "weak_when": "N/D"})
     data = row if isinstance(row, dict) else {}
-
     pf = _number(data.get("profit_factor"))
     trades = _number(data.get("trades"))
     ret = _number(data.get("return_pct"))
@@ -225,13 +203,7 @@ def render_strategy_card(strategy: str, row: dict[str, Any] | None = None) -> No
     pills = "".join(f'<span class="pill">{html.escape(str(x))}</span>' for x in signals[:5])
     label = html.escape(str(meta.get("label", strategy)))
     summary = html.escape(str(meta.get("summary", "N/D")))
-    card_html = (
-        '<div class="strategy-card">'
-        f'<div class="strategy-name">{label} <span title="{summary}">ⓘ</span></div>'
-        f'<div class="strategy-meta"><span class="pill {klass}">{health}</span> PF {fmt(pf)} · Return {fmt(ret, "%")} · Win {fmt(wr, "%")} · N {fmt(trades)}</div>'
-        f'<div style="font-size:.91rem; opacity:.82; margin-bottom:12px;">{summary}</div>'
-        f'<div>{pills}</div></div>'
-    )
+    card_html = ('<div class="strategy-card">' f'<div class="strategy-name">{label} <span title="{summary}">ⓘ</span></div>' f'<div class="strategy-meta"><span class="pill {klass}">{health}</span> PF {fmt(pf)} · Return {fmt(ret, "%")} · Win {fmt(wr, "%")} · N {fmt(trades)}</div>' f'<div style="font-size:.91rem; opacity:.82; margin-bottom:12px;">{summary}</div>' f'<div>{pills}</div></div>')
     st.markdown(card_html, unsafe_allow_html=True)
     with st.expander("COME FUNZIONA E QUANDO USARLA"):
         st.markdown(f"**Funziona meglio:** {meta.get('best_for', 'N/D')}")
