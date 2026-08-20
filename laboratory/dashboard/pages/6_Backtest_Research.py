@@ -9,9 +9,11 @@ SRC = LAB_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from lab.auth import require_dashboard_auth
 from lab.data import load_lab_backtest_results, load_lab_backtest_runs, load_lab_paper_signals
 
 st.set_page_config(page_title="Backtest Research", layout="wide")
+require_dashboard_auth()
 st.title("Backtest Research")
 st.caption("Research-only. Nessun ordine reale viene inviato.")
 
