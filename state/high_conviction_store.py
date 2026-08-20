@@ -24,7 +24,6 @@ def _text(value: Any) -> Optional[str]:
 
 
 def _pick(c: Dict[str, Any], *keys: str) -> Any:
-    """Return the first present, non-null Core field across engine aliases."""
     for key in keys:
         if key in c and c.get(key) is not None:
             return c.get(key)
@@ -63,93 +62,58 @@ def classify_high_conviction(market: str, c: Dict[str, Any]) -> Optional[str]:
     decision = str(c.get("decision") or "").upper().replace(" ", "_")
     display_state = str(c.get("display_state") or "").upper().replace("_", " ")
     operational = str(c.get("operational_state") or "").upper()
-
-    if decision == "BUY_NOW":
-        return "BUY NOW"
-    if decision == "BUY_LIMIT" or operational == "LIMIT_READY":
-        return "BUY LIMIT"
-
+    if decision == "BUY_NOW": return "BUY NOW"
+    if decision == "BUY_LIMIT" or operational == "LIMIT_READY": return "BUY LIMIT"
     if m == "usa":
-        score = _num(c.get("prebuy_score"))
-        eligible = bool(c.get("prebuy_eligible"))
-        if display_state == "PRE-BUY" and eligible and score is not None and score >= 8:
-            return "PRE-BUY HIGH"
+        score = _num(c.get("prebuy_score")); eligible = bool(c.get("prebuy_eligible"))
+        if display_state == "PRE-BUY" and eligible and score is not None and score >= 8: return "PRE-BUY HIGH"
         return None
-
     if m == "italy":
-        if operational in {"READY_FOR_TRIGGER", "SCORE_MARGINAL"}:
-            return "PRE-BUY HIGH"
+        if operational in {"READY_FOR_TRIGGER", "SCORE_MARGINAL"}: return "PRE-BUY HIGH"
         return None
-
     return None
 
 
 def _payload(run_id: str, market: str, c: Dict[str, Any], signal_class: str) -> Dict[str, Any]:
     failed = _pick(c, "failed_gates", "prebuy_missing") or []
-    if not isinstance(failed, list):
-        failed = [str(failed)]
+    if not isinstance(failed, list): failed = [str(failed)]
     return {
-        "run_id": run_id,
-        "market": market.upper(),
-        "ticker": _text(c.get("ticker")),
-        "company_name": _company_name(c),
-        "signal_class": signal_class,
-        "decision": _text(c.get("decision")),
-        "display_state": _text(c.get("display_state")),
-        "operational_state": _text(c.get("operational_state")),
-        "prebuy_score": _num(c.get("prebuy_score")),
-        "prebuy_label": _text(c.get("prebuy_label")),
-        "prebuy_eligible": bool(c.get("prebuy_eligible")) if c.get("prebuy_eligible") is not None else None,
-        "quality_score": _num(c.get("quality_score")),
-        "opportunity_score": _num(_pick(c, "opportunity_score", "score_total", "score")),
-        "signal_price": _num(_pick(c, "price", "last", "close")),
-        "buy_zone_low": _num(_pick(c, "buy_zone_low", "buy_range_low", "entry_low")),
-        "buy_zone_high": _num(_pick(c, "buy_zone_high", "buy_range_high", "entry_high")),
-        "entry": _num(_pick(c, "entry", "ideal_entry", "entry_price", "proposed_entry")),
-        "max_buy": _num(_pick(c, "max_buy", "max_entry")),
-        "stop": _num(_pick(c, "stop", "stop_loss", "proposed_stop")),
-        "tp1": _num(_pick(c, "tp1", "target1")),
-        "tp2": _num(_pick(c, "tp2", "target2", "target", "proposed_target")),
-        "gross_rr_tp1": _num(_pick(c, "gross_rr_tp1", "rr_gross_tp1")),
-        "net_rr_tp1": _num(_pick(c, "net_rr_tp1", "rr_net_tp1")),
-        "gross_rr_tp2": _num(_pick(c, "gross_rr_tp2", "rr_gross_tp2")),
-        "net_rr_tp2": _num(_pick(c, "net_rr_tp2", "rr_net_tp2", "net_rr", "rr")),
-        "trigger": _text(_pick(c, "trigger_state", "trigger")),
-        "missing_gates": _json_safe(failed),
-        "risk_usd": _num(_pick(c, "risk_usd", "position_risk_usd", "loss_max", "max_loss")),
-        "risk_pct": _num(_pick(c, "risk_pct", "position_risk_pct")),
-        "coverage_pct": _num(_pick(c, "data_coverage_pct", "coverage_pct")),
-        "change_state": _text(c.get("change_state")),
-        "active": True,
-        "payload": _json_safe(c),
+        "run_id": run_id, "market": market.upper(), "ticker": _text(c.get("ticker")), "company_name": _company_name(c),
+        "signal_class": signal_class, "decision": _text(c.get("decision")), "display_state": _text(c.get("display_state")),
+        "operational_state": _text(c.get("operational_state")), "prebuy_score": _num(c.get("prebuy_score")),
+        "prebuy_label": _text(c.get("prebuy_label")), "prebuy_eligible": bool(c.get("prebuy_eligible")) if c.get("prebuy_eligible") is not None else None,
+        "quality_score": _num(c.get("quality_score")), "opportunity_score": _num(_pick(c, "opportunity_score", "score_total", "score")),
+        "signal_price": _num(_pick(c, "price", "last", "close")), "buy_zone_low": _num(_pick(c, "buy_zone_low", "buy_range_low", "entry_low")),
+        "buy_zone_high": _num(_pick(c, "buy_zone_high", "buy_range_high", "entry_high")), "entry": _num(_pick(c, "entry", "ideal_entry", "entry_price", "proposed_entry")),
+        "max_buy": _num(_pick(c, "max_buy", "max_entry")), "stop": _num(_pick(c, "stop", "stop_loss", "proposed_stop")),
+        "tp1": _num(_pick(c, "tp1", "target1")), "tp2": _num(_pick(c, "tp2", "target2", "target", "proposed_target")),
+        "gross_rr_tp1": _num(_pick(c, "gross_rr_tp1", "rr_gross_tp1")), "net_rr_tp1": _num(_pick(c, "net_rr_tp1", "rr_net_tp1")),
+        "gross_rr_tp2": _num(_pick(c, "gross_rr_tp2", "rr_gross_tp2")), "net_rr_tp2": _num(_pick(c, "net_rr_tp2", "rr_net_tp2", "net_rr", "rr")),
+        "trigger": _text(_pick(c, "trigger_state", "trigger")), "missing_gates": _json_safe(failed),
+        "risk_usd": _num(_pick(c, "risk_usd", "position_risk_usd", "loss_max", "max_loss")), "risk_pct": _num(_pick(c, "risk_pct", "position_risk_pct")),
+        "coverage_pct": _num(_pick(c, "data_coverage_pct", "coverage_pct")), "change_state": _text(c.get("change_state")),
+        "active": True, "payload": _json_safe(c),
     }
 
 
 def persist_high_conviction(run_id: Optional[str], market: str, selected: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
-    """Best-effort Supabase persistence. Never blocks or alters the Core decision flow."""
-    url = os.getenv("SUPABASE_URL", "").strip()
-    key = os.getenv("SUPABASE_SECRET_KEY", "").strip()
-    if not url or not key:
-        return {"written": 0, "skipped": True, "reason": "supabase_not_configured"}
-
+    url = os.getenv("SUPABASE_URL", "").strip(); key = os.getenv("SUPABASE_SECRET_KEY", "").strip()
+    if not url or not key: return {"written": 0, "skipped": True, "reason": "supabase_not_configured"}
     try:
         from supabase import create_client
     except Exception as exc:
         return {"written": 0, "skipped": True, "reason": f"supabase_import:{exc}"}
-
-    rid = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    market_norm = market.upper()
-    rows = []
+    rid = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"); market_norm = market.upper(); rows = []
     for c in selected:
         signal_class = classify_high_conviction(market, c)
-        if signal_class:
-            rows.append(_payload(rid, market, c, signal_class))
-
+        if signal_class: rows.append(_payload(rid, market, c, signal_class))
     try:
         db = create_client(url, key)
-        db.table("core_high_conviction_signals").update({"active": False}).eq("market", market_norm).eq("active", True).execute()
         if rows:
             db.table("core_high_conviction_signals").upsert(rows, on_conflict="run_id,market,ticker").execute()
+            db.table("core_high_conviction_signals").update({"active": False}).eq("market", market_norm).eq("active", True).neq("run_id", rid).execute()
+        else:
+            db.table("core_high_conviction_signals").update({"active": False}).eq("market", market_norm).eq("active", True).execute()
         return {"written": len(rows), "skipped": False, "reason": None}
     except Exception as exc:
         return {"written": 0, "skipped": True, "reason": f"persist_failed:{type(exc).__name__}:{exc}"}
