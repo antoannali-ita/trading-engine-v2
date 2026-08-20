@@ -92,7 +92,7 @@ else:
                 st.write(f"**Trigger:** {fmt_trigger(row.get('trigger'))}")
 
 st.markdown("### Core High-Conviction Opportunities")
-CORE_HIGH = {"BUY NOW", "BUY LIMIT", "PRE-BUY HIGH", "PRE_BUY_HIGH", "SHADOW BUY", "SHADOW_BUY"}
+CORE_HIGH = {"BUY NOW", "BUY LIMIT", "PRE-BUY HIGH", "PRE BUY HIGH", "PRE_BUY_HIGH", "SHADOW BUY", "SHADOW_BUY"}
 
 if signals.empty:
     st.caption("No Core signals available in Supabase.")
