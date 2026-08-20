@@ -111,9 +111,26 @@ def run_backtest(symbol: str, prices: pd.DataFrame, strategy_name: str, config: 
     return frame, metrics
 
 
+def _max_drawdown_pct(trades: pd.DataFrame, initial_capital: float) -> float:
+    if trades.empty:
+        return 0.0
+    equity_curve = initial_capital + trades["net_pnl"].cumsum()
+    peaks = equity_curve.cummax()
+    drawdowns = (equity_curve / peaks - 1.0) * 100.0
+    return float(drawdowns.min()) if not drawdowns.empty else 0.0
+
+
 def summarize_backtest(trades: pd.DataFrame, initial_capital: float, final_equity: float) -> dict:
     if trades.empty:
-        return {"trades": 0, "win_rate": 0.0, "avg_return_pct": 0.0, "profit_factor": 0.0, "net_pnl": 0.0, "return_pct": 0.0}
+        return {
+            "trades": 0,
+            "win_rate": 0.0,
+            "avg_return_pct": 0.0,
+            "profit_factor": 0.0,
+            "net_pnl": 0.0,
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
+        }
     wins = trades.loc[trades.net_pnl > 0, "net_pnl"].sum()
     losses = -trades.loc[trades.net_pnl < 0, "net_pnl"].sum()
     return {
@@ -123,4 +140,5 @@ def summarize_backtest(trades: pd.DataFrame, initial_capital: float, final_equit
         "profit_factor": float(wins / losses) if losses > 0 else float("inf") if wins > 0 else 0.0,
         "net_pnl": float(final_equity - initial_capital),
         "return_pct": float((final_equity / initial_capital - 1) * 100),
+        "max_drawdown_pct": _max_drawdown_pct(trades, initial_capital),
     }
