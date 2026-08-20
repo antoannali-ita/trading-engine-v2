@@ -8,9 +8,11 @@ SRC = LAB_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from lab.auth import require_dashboard_auth
 from lab.data import load_signals
 
 st.set_page_config(page_title="Trading Lab | Action Center", layout="wide")
+require_dashboard_auth()
 st.title("Action Center")
 st.caption("Solo supporto decisionale. Nessun ordine automatico viene inviato al broker.")
 
