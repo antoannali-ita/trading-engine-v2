@@ -144,7 +144,8 @@ def strategy_health(profit_factor: Any, trades: Any, return_pct: Any) -> tuple[s
 
 def render_strategy_card(strategy: str, row: pd.Series | dict[str, Any] | None = None) -> None:
     meta = STRATEGY_INFO.get(strategy, {"label": strategy, "summary": "Descrizione non disponibile.", "signals": [], "best_for": "N/D", "weak_when": "N/D"})
-    row = row or {}
+    if row is None:
+        row = {}
     pf = row.get("profit_factor") if hasattr(row, "get") else None
     trades = row.get("trades") if hasattr(row, "get") else None
     ret = row.get("return_pct") if hasattr(row, "get") else None
@@ -153,6 +154,8 @@ def render_strategy_card(strategy: str, row: pd.Series | dict[str, Any] | None =
 
     def fmt(v: Any, suffix: str = "") -> str:
         try:
+            if pd.isna(v):
+                return "N/D"
             return f"{float(v):.2f}{suffix}"
         except (TypeError, ValueError):
             return "N/D"
