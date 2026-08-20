@@ -28,6 +28,7 @@ DEFAULT_SYMBOLS = [
 PRICE_STRATEGIES = [name for name, spec in STRATEGIES.items() if spec.generator is not None]
 MAX_POSITION = 5000.0
 COMMISSION = 12.0
+BENCHMARK_ETFS = {"SPY", "QQQ"}
 
 
 def symbols() -> list[str]:
@@ -79,6 +80,14 @@ def _entry_and_trigger(strategy: str, last) -> tuple[float, str, str]:
 
 
 def _news_and_calendar(symbol: str) -> dict:
+    # SPY/QQQ are benchmark ETFs: no company earnings/fundamentals lookup.
+    if symbol in BENCHMARK_ETFS:
+        return {
+            "news": [],
+            "earnings_date": None,
+            "catalyst_quality": "BENCHMARK_ETF",
+        }
+
     out = {"news": [], "earnings_date": None, "catalyst_quality": "AGGREGATOR_ONLY"}
     try:
         t = yf.Ticker(symbol)
@@ -121,7 +130,7 @@ def _upsert_watchlist(client, payload: dict) -> None:
 
 
 def _open_position_if_needed(client, symbol: str, strategy: str, signal_date: str, price: float, stop: float, tp1: float, tp2: float, qty: int, details: dict) -> bool:
-    if qty <= 0:
+    if qty <= 0 or symbol in BENCHMARK_ETFS:
         return False
     existing = (
         client.table("lab_paper_positions")
@@ -190,7 +199,6 @@ def _update_existing_positions(client, symbol: str, last_bar, check_date: str) -
         tp2 = _safe(p.get("tp2"))
         status = str(p.get("status") or "OPEN")
 
-        # Conservative same-bar policy: stop has priority over target.
         if stop is not None and low <= stop:
             gross = (stop - entry) * qty
             net = gross - float(p.get("commission_entry") or COMMISSION) - COMMISSION
@@ -277,7 +285,6 @@ def main() -> int:
     lifecycle_updates = 0
     now = datetime.now(timezone.utc)
 
-    # Expire stale Lab watchlist rows. Historical paper signals remain untouched.
     try:
         stale_before = (now - timedelta(days=3)).isoformat()
         client.table("lab_watchlist").update({"active": False}).lt("last_seen_at", stale_before).eq("active", True).execute()
