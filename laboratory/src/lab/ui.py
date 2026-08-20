@@ -94,40 +94,22 @@ def apply_theme() -> None:
         [data-testid="stSidebar"] .stPageLink a:hover {background:rgba(99,102,241,.09);}
         .block-container {padding-top: 1.6rem; padding-bottom: 3rem; max-width: 1500px;}
         h1, h2, h3 {letter-spacing: -0.02em;}
-        [data-testid="stMetric"] {
-            border: 1px solid rgba(128,128,128,.18);
-            border-radius: 16px;
-            padding: 14px 16px;
-            background: rgba(128,128,128,.045);
-        }
-        [data-testid="stMetricLabel"] {font-weight: 600; opacity: .82;}
-        [data-testid="stMetricValue"] {font-weight: 750;}
-        .lab-hero {
-            border: 1px solid rgba(128,128,128,.18);
-            border-radius: 22px;
-            padding: 22px 24px;
-            margin-bottom: 18px;
-            background: linear-gradient(135deg, rgba(99,102,241,.12), rgba(14,165,233,.05));
-        }
-        .lab-eyebrow {font-size: .75rem; letter-spacing: .12em; text-transform: uppercase; opacity: .62; font-weight: 700;}
-        .lab-title {font-size: 2rem; font-weight: 800; margin-top: 4px;}
-        .lab-subtitle {font-size: 1rem; opacity: .74; margin-top: 5px; max-width: 900px;}
-        .strategy-card {
-            border: 1px solid rgba(128,128,128,.18);
-            border-radius: 18px;
-            padding: 18px;
-            min-height: 210px;
-            background: rgba(128,128,128,.035);
-        }
-        .strategy-name {font-size: 1.05rem; font-weight: 760; margin-bottom: 4px;}
-        .strategy-meta {font-size: .8rem; opacity: .68; margin-bottom: 10px;}
+        [data-testid="stMetric"] {border:1px solid rgba(128,128,128,.18); border-radius:16px; padding:14px 16px; background:rgba(128,128,128,.045);}
+        [data-testid="stMetricLabel"] {font-weight:600; opacity:.82;}
+        [data-testid="stMetricValue"] {font-weight:750;}
+        .lab-hero {border:1px solid rgba(128,128,128,.18); border-radius:22px; padding:22px 24px; margin-bottom:18px; background:linear-gradient(135deg, rgba(99,102,241,.12), rgba(14,165,233,.05));}
+        .lab-eyebrow {font-size:.75rem; letter-spacing:.12em; text-transform:uppercase; opacity:.62; font-weight:700;}
+        .lab-title {font-size:2rem; font-weight:800; margin-top:4px;}
+        .lab-subtitle {font-size:1rem; opacity:.74; margin-top:5px; max-width:900px;}
+        .strategy-card {border:1px solid rgba(128,128,128,.18); border-radius:18px; padding:18px; min-height:210px; background:rgba(128,128,128,.035);}
+        .strategy-name {font-size:1.05rem; font-weight:760; margin-bottom:4px;}
+        .strategy-meta {font-size:.8rem; opacity:.68; margin-bottom:10px;}
         .pill {display:inline-block; padding:4px 9px; border-radius:999px; font-size:.73rem; font-weight:700; margin-right:5px; margin-bottom:5px; background:rgba(99,102,241,.12);}
         .status-good {background:rgba(34,197,94,.14);}
         .status-mid {background:rgba(234,179,8,.16);}
         .status-bad {background:rgba(239,68,68,.13);}
         .status-na {background:rgba(148,163,184,.16);}
         div[data-testid="stDataFrame"] {border:1px solid rgba(128,128,128,.13); border-radius:14px; overflow:hidden;}
-        .small-note {font-size:.82rem; opacity:.66;}
         </style>
         """,
         unsafe_allow_html=True,
@@ -137,22 +119,33 @@ def apply_theme() -> None:
 
 def page_header(title: str, subtitle: str, eyebrow: str = "TRADING LAB 2.0") -> None:
     st.markdown(
-        f"""
-        <div class="lab-hero">
-          <div class="lab-eyebrow">{html.escape(eyebrow)}</div>
-          <div class="lab-title">{html.escape(title)}</div>
-          <div class="lab-subtitle">{html.escape(subtitle)}</div>
-        </div>
-        """,
+        f'<div class="lab-hero"><div class="lab-eyebrow">{html.escape(eyebrow)}</div><div class="lab-title">{html.escape(title)}</div><div class="lab-subtitle">{html.escape(subtitle)}</div></div>',
         unsafe_allow_html=True,
     )
 
 
+def _scalar(value: Any) -> Any:
+    """Return a single scalar without ever asking pandas objects for truthiness."""
+    if isinstance(value, pd.DataFrame):
+        if value.empty:
+            return None
+        return _scalar(value.iloc[0, 0])
+    if isinstance(value, pd.Series):
+        if value.empty:
+            return None
+        non_null = value.dropna()
+        return _scalar(non_null.iloc[0] if not non_null.empty else None)
+    if isinstance(value, (list, tuple)):
+        return _scalar(value[0]) if len(value) else None
+    return value
+
+
 def strategy_health(profit_factor: Any, trades: Any, return_pct: Any) -> tuple[str, str]:
     try:
-        pf = float(profit_factor)
-        n = float(trades)
-        ret = float(return_pct)
+        pf_raw, n_raw, ret_raw = _scalar(profit_factor), _scalar(trades), _scalar(return_pct)
+        if pf_raw is None or n_raw is None or ret_raw is None:
+            return "N/D", "status-na"
+        pf, n, ret = float(pf_raw), float(n_raw), float(ret_raw)
         if pd.isna(pf) or pd.isna(n) or pd.isna(ret):
             return "N/D", "status-na"
     except (TypeError, ValueError):
@@ -166,36 +159,47 @@ def strategy_health(profit_factor: Any, trades: Any, return_pct: Any) -> tuple[s
     return "Campione piccolo", "status-na"
 
 
-def render_strategy_card(strategy: str, row: pd.Series | dict[str, Any] | None = None) -> None:
+def render_strategy_card(strategy: str, row: pd.Series | dict[str, Any] | pd.DataFrame | None = None) -> None:
     meta = STRATEGY_INFO.get(strategy, {"label": strategy, "summary": "Descrizione non disponibile.", "signals": [], "best_for": "N/D", "weak_when": "N/D"})
     if row is None:
-        row = {}
-    pf = row.get("profit_factor") if hasattr(row, "get") else None
-    trades = row.get("trades") if hasattr(row, "get") else None
-    ret = row.get("return_pct") if hasattr(row, "get") else None
-    wr = row.get("win_rate") if hasattr(row, "get") else None
+        row_data: Any = {}
+    elif isinstance(row, pd.DataFrame):
+        row_data = row.iloc[0] if not row.empty else {}
+    else:
+        row_data = row
+
+    def get_value(key: str) -> Any:
+        if hasattr(row_data, "get"):
+            return _scalar(row_data.get(key))
+        return None
+
+    pf = get_value("profit_factor")
+    trades = get_value("trades")
+    ret = get_value("return_pct")
+    wr = get_value("win_rate")
     health, klass = strategy_health(pf, trades, ret)
 
-    def fmt(v: Any, suffix: str = "") -> str:
+    def fmt(value: Any, suffix: str = "") -> str:
+        scalar = _scalar(value)
+        if scalar is None:
+            return "N/D"
         try:
-            if pd.isna(v):
+            number = float(scalar)
+            if pd.isna(number):
                 return "N/D"
-            return f"{float(v):.2f}{suffix}"
+            return f"{number:.2f}{suffix}"
         except (TypeError, ValueError):
             return "N/D"
 
-    pills = "".join(f'<span class="pill">{html.escape(x)}</span>' for x in meta["signals"][:5])
-    st.markdown(
-        f"""
-        <div class="strategy-card">
-          <div class="strategy-name">{html.escape(meta['label'])} <span title="{html.escape(meta['summary'])}">ⓘ</span></div>
-          <div class="strategy-meta"><span class="pill {klass}">{health}</span> PF {fmt(pf)} · Return {fmt(ret, '%')} · Win {fmt(wr, '%')} · N {fmt(trades)}</div>
-          <div style="font-size:.91rem; opacity:.82; margin-bottom:12px;">{html.escape(meta['summary'])}</div>
-          <div>{pills}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    pills = "".join(f'<span class="pill">{html.escape(str(x))}</span>' for x in meta["signals"][:5])
+    card_html = (
+        '<div class="strategy-card">'
+        f'<div class="strategy-name">{html.escape(str(meta["label"]))} <span title="{html.escape(str(meta["summary"]))}">ⓘ</span></div>'
+        f'<div class="strategy-meta"><span class="pill {klass}">{health}</span> PF {fmt(pf)} · Return {fmt(ret, "%")} · Win {fmt(wr, "%")} · N {fmt(trades)}</div>'
+        f'<div style="font-size:.91rem; opacity:.82; margin-bottom:12px;">{html.escape(str(meta["summary"]))}</div>'
+        f'<div>{pills}</div></div>'
     )
+    st.markdown(card_html, unsafe_allow_html=True)
     with st.expander("Come funziona e quando usarla"):
         st.markdown(f"**Funziona meglio:** {meta['best_for']}")
         st.markdown(f"**Tende a soffrire:** {meta['weak_when']}")
@@ -203,4 +207,4 @@ def render_strategy_card(strategy: str, row: pd.Series | dict[str, Any] | None =
 
 
 def info_help(label: str, text: str) -> None:
-    st.markdown(f"**{html.escape(label)}** <span title=\"{html.escape(text)}\">ⓘ</span>", unsafe_allow_html=True)
+    st.markdown(f'**{html.escape(label)}** <span title="{html.escape(text)}">ⓘ</span>', unsafe_allow_html=True)
