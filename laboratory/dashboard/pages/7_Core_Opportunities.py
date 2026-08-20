@@ -30,13 +30,15 @@ def intraday_snapshot(ticker: str, market: str):
     try:
         hist = yf.Ticker(symbol).history(period="1d", interval="5m", auto_adjust=True)
         if hist.empty or hist["Close"].dropna().empty:
-            return None, None, None
+            return None, None, None, None
         current = float(hist["Close"].dropna().iloc[-1])
         day_low = float(hist["Low"].dropna().min()) if "Low" in hist and not hist["Low"].dropna().empty else None
         day_high = float(hist["High"].dropna().max()) if "High" in hist and not hist["High"].dropna().empty else None
-        return current, day_low, day_high
+        session_open = float(hist["Open"].dropna().iloc[0]) if "Open" in hist and not hist["Open"].dropna().empty else None
+        day_pct = ((current / session_open) - 1.0) * 100.0 if session_open not in (None, 0) else None
+        return current, day_low, day_high, day_pct
     except Exception:
-        return None, None, None
+        return None, None, None, None
 
 
 def _currency(market: str) -> str:
@@ -45,6 +47,19 @@ def _currency(market: str) -> str:
 
 def _money(value, market: str) -> str:
     return fmt_money(value, symbol=_currency(market))
+
+
+def _pct_text(value) -> str:
+    if value is None or pd.isna(value):
+        return "N/D"
+    return f"{float(value):+.2f}%"
+
+
+def _pct_html(value) -> str:
+    if value is None or pd.isna(value):
+        return '<span style="opacity:.72;font-weight:800">N/D</span>'
+    color = "#dc2626" if float(value) < 0 else "inherit"
+    return f'<span style="color:{color};font-weight:800">{float(value):+.2f}%</span>'
 
 
 def tv_url(row, market: str) -> str:
@@ -107,12 +122,13 @@ for market in ["USA", "ITALY"]:
     block = block.drop_duplicates(subset=["ticker"], keep="first")
     snapshots = [intraday_snapshot(str(row.get("ticker")), market) for _, row in block.iterrows()]
     block["Current Price"] = [x[0] for x in snapshots]
-    block["Day Low"] = [x[1] for x in snapshots]
-    block["Day High"] = [x[2] for x in snapshots]
+    block["Min"] = [x[1] for x in snapshots]
+    block["Max"] = [x[2] for x in snapshots]
+    block["Oggi %"] = [x[3] for x in snapshots]
     block["Company"] = block.get("company_name", pd.Series(index=block.index)).fillna("N/D")
     block["Status"] = block.get("signal_class", pd.Series(index=block.index)).fillna("N/D")
     block["Buy Range"] = block.apply(lambda r: f"{_money(r.get('buy_zone_low'), market)} – {_money(r.get('buy_zone_high'), market)}", axis=1)
-    block["Day Range"] = block.apply(lambda r: f"{_money(r.get('Day Low'), market)} – {_money(r.get('Day High'), market)}", axis=1)
+    block["Min / Max"] = block.apply(lambda r: f"{_money(r.get('Min'), market)} – {_money(r.get('Max'), market)}", axis=1)
     block["Entry"] = block.get("entry", pd.Series(index=block.index)).map(lambda v: _money(v, market))
     block["SL"] = block.get("stop", pd.Series(index=block.index)).map(lambda v: _money(v, market))
     block["TP1"] = block.get("tp1", pd.Series(index=block.index)).map(lambda v: _money(v, market))
@@ -120,9 +136,10 @@ for market in ["USA", "ITALY"]:
     block["Net R/R"] = block.get("net_rr_tp2", pd.Series(index=block.index)).map(fmt_rr)
     block["Chart"] = block.apply(lambda r: tv_url(r, market), axis=1)
 
-    table = block[["ticker", "Company", "Status", "Current Price", "Day Range", "Buy Range", "Entry", "SL", "TP1", "TP2", "Net R/R", "Chart"]].copy()
+    table = block[["ticker", "Company", "Status", "Current Price", "Oggi %", "Min / Max", "Buy Range", "Entry", "SL", "TP1", "TP2", "Net R/R", "Chart"]].copy()
     table = table.rename(columns={"ticker": "Ticker"})
     table["Current Price"] = table["Current Price"].map(lambda v: _money(v, market))
+    table["Oggi %"] = table["Oggi %"].map(_pct_text)
 
     st.dataframe(
         table,
@@ -138,7 +155,13 @@ for market in ["USA", "ITALY"]:
             with st.popover(f"ℹ️ {ticker}", use_container_width=True):
                 st.markdown(f"**{ticker} · {row.get('company_name') or 'N/D'}**")
                 st.write(f"Status: **{row.get('signal_class', 'N/D')}**")
-                st.write(f"Current / Day Range: **{_money(row.get('Current Price'), market)} · {_money(row.get('Day Low'), market)} – {_money(row.get('Day High'), market)}**")
+                st.markdown(
+                    f"**Current:** {_money(row.get('Current Price'), market)} · "
+                    f"**Min:** {_money(row.get('Min'), market)} · "
+                    f"**Max:** {_money(row.get('Max'), market)} · "
+                    f"**Oggi:** {_pct_html(row.get('Oggi %'))}",
+                    unsafe_allow_html=True,
+                )
                 if pd.notna(row.get("prebuy_score")):
                     st.write(f"PRE-BUY Score: **{int(float(row.get('prebuy_score')))}/10**")
                 if pd.notna(row.get("opportunity_score")):
@@ -153,4 +176,4 @@ for market in ["USA", "ITALY"]:
                 st.info(_reason(row))
                 st.caption(f"Core snapshot: {row.get('created_at', 'N/D')} · Run {row.get('run_id', 'N/D')}")
 
-st.caption("Source: Core high-conviction persistence. Current Price and Day Range are cached market-data context; Signal Price remains stored in the DB for audit.")
+st.caption("Source: Core high-conviction persistence. Current/Min/Max/% Oggi are cached market-data context; Signal Price remains stored in the DB for audit.")
