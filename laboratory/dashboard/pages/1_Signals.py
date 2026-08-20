@@ -1,9 +1,11 @@
+import html
 import sys
 from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import yfinance as yf
 
 LAB_ROOT = Path(__file__).resolve().parents[2]
 SRC = LAB_ROOT / "src"
@@ -22,6 +24,48 @@ page_header(
     "Vista operativa dei segnali Core. Filtra e confronta score, R/R e setup senza ricalcolare la logica del motore.",
     eyebrow="CORE · SIGNALS · DECISION SUPPORT",
 )
+
+st.markdown(
+    """
+    <style>
+    .core-kpi-row {display:grid; grid-template-columns:.72fr .72fr 1.56fr; gap:8px; margin:.42rem 0 .55rem 0;}
+    .core-kpi {border:1px solid rgba(128,128,128,.20); border-radius:10px; padding:7px 9px; min-height:58px; background:rgba(128,128,128,.025);}
+    .core-kpi-label {font-size:.65rem; opacity:.65; margin-bottom:3px;}
+    .core-kpi-value {font-size:1rem; font-weight:760; line-height:1.18;}
+    .core-trigger {font-size:.70rem; font-weight:780; line-height:1.28; overflow-wrap:anywhere;}
+    .core-market-strip {margin:.12rem 0 .48rem 0; padding:6px 8px; border-radius:8px; background:rgba(59,130,246,.06); font-size:.74rem; line-height:1.35;}
+    .core-levels {display:grid; grid-template-columns:1fr 1fr; gap:5px 12px; font-size:.80rem; line-height:1.38; margin-top:.18rem;}
+    .core-levels b {font-weight:730;}
+    .core-meta {grid-column:1 / -1; padding-top:3px; margin-top:2px; border-top:1px solid rgba(128,128,128,.12); font-size:.76rem; opacity:.82;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def intraday_snapshot(ticker: str, market: str):
+    t = str(ticker or "").strip().upper()
+    m = str(market or "").strip().upper()
+    symbol = t
+    if m in {"ITALY", "ITA", "MIL", "MI"} and "." not in t:
+        symbol = f"{t}.MI"
+    try:
+        hist = yf.Ticker(symbol).history(period="1d", interval="5m", auto_adjust=True)
+        if hist.empty or hist["Close"].dropna().empty:
+            return None, None, None
+        current = float(hist["Close"].dropna().iloc[-1])
+        day_low = float(hist["Low"].dropna().min()) if "Low" in hist and not hist["Low"].dropna().empty else None
+        day_high = float(hist["High"].dropna().max()) if "High" in hist and not hist["High"].dropna().empty else None
+        return current, day_low, day_high
+    except Exception:
+        return None, None, None
+
+
+def _money(value, market):
+    symbol = "€" if str(market or "").upper() in {"ITALY", "ITA", "MIL", "MI"} else "$"
+    return fmt_money(value, symbol=symbol)
+
 
 try:
     signals = load_signals()
@@ -80,21 +124,41 @@ else:
         with cols[idx % 3]:
             with st.container(border=True):
                 row_company = row.get("company_name") if "company_name" in row.index else None
-                st.markdown(f'<div class="candidate-title">{candidate_title(row.get("ticker"), row_company)}</div>', unsafe_allow_html=True)
+                ticker = row.get("ticker")
+                market_value = row.get("market", "USA")
+                current, day_low, day_high = intraday_snapshot(str(ticker), str(market_value))
+
+                st.markdown(f'<div class="candidate-title">{candidate_title(ticker, row_company)}</div>', unsafe_allow_html=True)
                 status_text = fmt_status(row.get("status", ""))
                 setup_text = str(row.get("setup", "N/D")).replace("_", " ")
-                st.markdown(f'<div class="candidate-state">{status_text} · {setup_text}</div>', unsafe_allow_html=True)
-                a, b, c = st.columns([1, 1, 1.15], gap="small")
-                a.metric("Score", fmt_score(row.get("score_total")))
-                b.metric("Net R/R", fmt_rr(row.get("rr_net_tp2")))
+                st.markdown(f'<div class="candidate-state">{html.escape(status_text)} · {html.escape(setup_text)}</div>', unsafe_allow_html=True)
+
                 trigger = fmt_trigger(row.get("trigger"))
-                with c:
-                    st.caption("Trigger")
-                    st.markdown(f'<span class="trigger-badge {trigger_class(trigger)}">{trigger}</span>', unsafe_allow_html=True)
                 st.markdown(
-                    f'<div class="candidate-detail"><b>Entry / Max Buy:</b> {fmt_money(row.get("entry"))} / {fmt_money(row.get("max_buy"))}<br>'
-                    f'<b>Stop:</b> {fmt_money(row.get("stop"))} · <b>TP2:</b> {fmt_money(row.get("tp2"))}<br>'
-                    f'<span style="opacity:.76">Data Quality: {row.get("data_quality", "N/D")} · Earnings: {row.get("earnings_date", "N/D")}</span></div>',
+                    f'<div class="core-kpi-row">'
+                    f'<div class="core-kpi"><div class="core-kpi-label">Score</div><div class="core-kpi-value">{fmt_score(row.get("score_total"))}</div></div>'
+                    f'<div class="core-kpi"><div class="core-kpi-label">Net R/R</div><div class="core-kpi-value">{fmt_rr(row.get("rr_net_tp2"))}</div></div>'
+                    f'<div class="core-kpi"><div class="core-kpi-label">Trigger</div><div class="core-trigger {trigger_class(trigger)}">{html.escape(trigger)}</div></div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+                st.markdown(
+                    f'<div class="core-market-strip"><b>Current:</b> {_money(current, market_value)} &nbsp;·&nbsp; '
+                    f'<b>Day Low:</b> {_money(day_low, market_value)} &nbsp;·&nbsp; '
+                    f'<b>Day High:</b> {_money(day_high, market_value)}</div>',
+                    unsafe_allow_html=True,
+                )
+
+                st.markdown(
+                    f'<div class="core-levels">'
+                    f'<div><b>Entry:</b> {_money(row.get("entry"), market_value)}</div>'
+                    f'<div><b>Max Buy:</b> {_money(row.get("max_buy"), market_value)}</div>'
+                    f'<div><b>Stop:</b> {_money(row.get("stop"), market_value)}</div>'
+                    f'<div><b>TP2:</b> {_money(row.get("tp2"), market_value)}</div>'
+                    f'<div class="core-meta"><b>Data Quality:</b> {html.escape(str(row.get("data_quality", "N/D")))} &nbsp;·&nbsp; '
+                    f'<b>Earnings:</b> {html.escape(str(row.get("earnings_date", "N/D")))}</div>'
+                    f'</div>',
                     unsafe_allow_html=True,
                 )
 
@@ -131,4 +195,4 @@ with st.expander("Full Table", expanded=False):
     localized = localize_table(formatted[cols])
     st.dataframe(localized, use_container_width=True, hide_index=True, column_config={"Company": st.column_config.TextColumn("Company"), "TradingView": st.column_config.LinkColumn("Chart", display_text="Open")})
 
-st.caption("Scores and statuses are engine outputs. This page organizes them; it does not recalculate them.")
+st.caption("Scores and statuses are engine outputs. Intraday values are cached market-data context and do not change the Core decision.")
