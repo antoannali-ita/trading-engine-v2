@@ -54,7 +54,13 @@ def main():
 
     if not a.no_persist:
         hc_selected = _enrich_presentation_fields(a.market, ref, selected)
-        hc = persist_high_conviction(result.get("run_id"), a.market, hc_selected)
+        hc = persist_high_conviction(
+            result.get("run_id"),
+            a.market,
+            hc_selected,
+            reference=ref,
+            regime=result.get("regime"),
+        )
         print(
             "CORE_HIGH_CONVICTION "
             f"market={a.market.upper()} written={hc.get('written', 0)} "
