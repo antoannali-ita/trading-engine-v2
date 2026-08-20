@@ -1,7 +1,6 @@
 name: Fast Monitor v2
 
 on:
-  # Avvio manuale per test/emergenze
   workflow_dispatch:
     inputs:
       market:
@@ -13,16 +12,6 @@ on:
           - italy
           - both
         default: both
-
-  # GitHub cron usa UTC.
-  #
-  # Finestra complessiva che copre:
-  # ITALIA: 09:00-17:30 Europe/Rome
-  # USA:    09:30-16:00 America/New_York
-  #
-  # Il workflow parte ogni 5 minuti.
-  # market/session.py decide se ciascun mercato
-  # è effettivamente aperto.
   schedule:
     - cron: '*/5 7-21 * * 1-5'
 
@@ -34,112 +23,76 @@ permissions:
   contents: read
 
 jobs:
-
-  # ============================================================
-  # ITALIA
-  # ============================================================
   italy:
     name: Fast Monitor ITALY
     runs-on: ubuntu-latest
-
-    # Automatico oppure manuale con italy/both
     if: >
       github.event_name == 'schedule' ||
       github.event.inputs.market == 'italy' ||
       github.event.inputs.market == 'both'
-
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
-      - name: Restore Fast Monitor state
+      - name: Restore shared CORE runtime data
         uses: actions/cache@v4
         with:
           path: data
-          key: v2-fast-italy-${{ runner.os }}-${{ github.run_id }}
+          key: v2-core-runtime-${{ runner.os }}-${{ github.run_id }}-italy
           restore-keys: |
+            v2-core-runtime-${{ runner.os }}-
+            v2-parity-${{ runner.os }}-
             v2-fast-italy-${{ runner.os }}-
-
       - name: Run Fast Monitor ITALY
         env:
           WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
-
           TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
-
           PORTFOLIO_POSITIONS_JSON: ${{ secrets.PORTFOLIO_POSITIONS_JSON }}
-
         run: |
-          echo "========================================"
-          echo "Trading Engine v2"
           echo "FAST MONITOR - ITALY"
-          echo "========================================"
-
           python -m monitor.fast_monitor --market italy
-
           echo "ITALY Fast Monitor completed."
 
-
-  # ============================================================
-  # USA
-  # ============================================================
   usa:
     name: Fast Monitor USA
     runs-on: ubuntu-latest
-
-    # Automatico oppure manuale con usa/both
     if: >
       github.event_name == 'schedule' ||
       github.event.inputs.market == 'usa' ||
       github.event.inputs.market == 'both'
-
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
-      - name: Restore Fast Monitor state
+      - name: Restore shared CORE runtime data
         uses: actions/cache@v4
         with:
           path: data
-          key: v2-fast-usa-${{ runner.os }}-${{ github.run_id }}
+          key: v2-core-runtime-${{ runner.os }}-${{ github.run_id }}-usa
           restore-keys: |
+            v2-core-runtime-${{ runner.os }}-
+            v2-parity-${{ runner.os }}-
             v2-fast-usa-${{ runner.os }}-
-
       - name: Run Fast Monitor USA
         env:
           WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
-
           TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
-
           PORTFOLIO_POSITIONS_JSON: ${{ secrets.PORTFOLIO_POSITIONS_JSON }}
-
         run: |
-          echo "========================================"
-          echo "Trading Engine v2"
           echo "FAST MONITOR - USA"
-          echo "========================================"
-
           python -m monitor.fast_monitor --market usa
-
           echo "USA Fast Monitor completed."
