@@ -7,7 +7,8 @@ import pandas as pd
 import streamlit as st
 
 
-UI_BUILD = "2026.08.20-2035"
+UI_BUILD = "2026.08.20-2040"
+COPYRIGHT_TEXT = "Questo sito è stato prodotto da AntonioLaRocca · Tutti i diritti riservati."
 
 STRATEGY_INFO = {
     "trend_continuation": {
@@ -82,7 +83,8 @@ def _sidebar_navigation() -> None:
     st.sidebar.page_link("pages/3_Laboratory.py", label="📊  SIGNAL OUTCOMES")
     st.sidebar.page_link("pages/4_Engine_Health.py", label="🩺  ENGINE HEALTH")
     st.sidebar.markdown("---")
-    st.sidebar.caption(f"PAPER / RESEARCH · BUILD {UI_BUILD}")
+    st.sidebar.caption(f"BUILD {UI_BUILD}")
+    st.sidebar.caption("© 2026 AntonioLaRocca · Tutti i diritti riservati.")
 
 
 def apply_theme() -> None:
@@ -94,7 +96,7 @@ def apply_theme() -> None:
         [data-testid="stSidebar"] .stPageLink {margin-bottom:.15rem;}
         [data-testid="stSidebar"] .stPageLink a {border-radius:10px; padding:.5rem .62rem; font-weight:700; letter-spacing:.02em;}
         [data-testid="stSidebar"] .stPageLink a:hover {background:rgba(99,102,241,.09);}
-        .block-container {padding-top:1.6rem; padding-bottom:3rem; max-width:1500px;}
+        .block-container {padding-top:1.6rem; padding-bottom:5.2rem; max-width:1500px;}
         h1, h2, h3 {letter-spacing:-0.02em;}
         [data-testid="stMetric"] {border:1px solid rgba(128,128,128,.18); border-radius:16px; padding:14px 16px; background:rgba(128,128,128,.045);}
         [data-testid="stMetricLabel"] {font-weight:600; opacity:.82;}
@@ -112,8 +114,29 @@ def apply_theme() -> None:
         .status-bad {background:rgba(239,68,68,.13);}
         .status-na {background:rgba(148,163,184,.16);}
         div[data-testid="stDataFrame"] {border:1px solid rgba(128,128,128,.13); border-radius:14px; overflow:hidden;}
+        .site-footer {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 999;
+            padding: .55rem 1rem;
+            text-align: center;
+            font-size: .76rem;
+            opacity: .78;
+            backdrop-filter: blur(10px);
+            background: rgba(250,250,250,.88);
+            border-top: 1px solid rgba(128,128,128,.14);
+        }
+        @media (prefers-color-scheme: dark) {
+            .site-footer {background: rgba(14,17,23,.88);}
+        }
         </style>
         """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div class="site-footer">{html.escape(COPYRIGHT_TEXT)} · © 2026</div>',
         unsafe_allow_html=True,
     )
     _sidebar_navigation()
