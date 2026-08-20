@@ -87,7 +87,8 @@ def risk_based_qty(
     if entry <= 0 or risk_per_share <= 0:
         return 0
     risk_budget = capital_base * (risk_pct / 100.0)
-    qty_by_risk = math.floor(max(risk_budget - commission, 0.0) / risk_per_share)
+    round_trip_commission = 2.0 * commission
+    qty_by_risk = math.floor(max(risk_budget - round_trip_commission, 0.0) / risk_per_share)
     qty_by_cap = math.floor(max(max_position - commission, 0.0) / entry)
     return max(0, min(qty_by_risk, qty_by_cap))
 
