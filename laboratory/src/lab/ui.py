@@ -7,6 +7,8 @@ import pandas as pd
 import streamlit as st
 
 
+UI_BUILD = "2026.08.20-2030"
+
 STRATEGY_INFO = {
     "trend_continuation": {
         "label": "Trend Continuation",
@@ -68,19 +70,19 @@ STRATEGY_INFO = {
 
 
 def _sidebar_navigation() -> None:
-    st.sidebar.markdown("## 📈 Trading Lab")
-    st.sidebar.caption("Decisione · rischio · ricerca")
-    st.sidebar.page_link("app.py", label="🏠  Control Room")
-    st.sidebar.page_link("pages/1_Signals.py", label="🎯  Opportunità")
-    st.sidebar.page_link("pages/5_Action_Center.py", label="⚡  Action Center")
-    st.sidebar.page_link("pages/2_Portfolio.py", label="💼  Portafoglio")
+    st.sidebar.markdown("## 📈 TRADING LAB")
+    st.sidebar.caption("DECISIONE · RISCHIO · RICERCA")
+    st.sidebar.page_link("app.py", label="🏠  CONTROL ROOM")
+    st.sidebar.page_link("pages/1_Signals.py", label="🎯  OPPORTUNITÀ")
+    st.sidebar.page_link("pages/5_Action_Center.py", label="⚡  ACTION CENTER")
+    st.sidebar.page_link("pages/2_Portfolio.py", label="💼  PORTAFOGLIO")
     st.sidebar.markdown("---")
     st.sidebar.caption("ANALISI & RICERCA")
-    st.sidebar.page_link("pages/6_Backtest_Research.py", label="🧪  Strategy Lab")
-    st.sidebar.page_link("pages/3_Laboratory.py", label="📊  Signal Outcomes")
-    st.sidebar.page_link("pages/4_Engine_Health.py", label="🩺  Engine Health")
+    st.sidebar.page_link("pages/6_Backtest_Research.py", label="🧪  STRATEGY LAB")
+    st.sidebar.page_link("pages/3_Laboratory.py", label="📊  SIGNAL OUTCOMES")
+    st.sidebar.page_link("pages/4_Engine_Health.py", label="🩺  ENGINE HEALTH")
     st.sidebar.markdown("---")
-    st.sidebar.caption("PAPER / RESEARCH · nessun ordine automatico")
+    st.sidebar.caption(f"PAPER / RESEARCH · BUILD {UI_BUILD}")
 
 
 def apply_theme() -> None:
@@ -90,10 +92,10 @@ def apply_theme() -> None:
         [data-testid="stSidebarNav"] {display:none;}
         [data-testid="stSidebar"] {border-right:1px solid rgba(128,128,128,.14);}
         [data-testid="stSidebar"] .stPageLink {margin-bottom:.15rem;}
-        [data-testid="stSidebar"] .stPageLink a {border-radius:10px; padding:.48rem .62rem;}
+        [data-testid="stSidebar"] .stPageLink a {border-radius:10px; padding:.5rem .62rem; font-weight:700; letter-spacing:.02em;}
         [data-testid="stSidebar"] .stPageLink a:hover {background:rgba(99,102,241,.09);}
-        .block-container {padding-top: 1.6rem; padding-bottom: 3rem; max-width: 1500px;}
-        h1, h2, h3 {letter-spacing: -0.02em;}
+        .block-container {padding-top:1.6rem; padding-bottom:3rem; max-width:1500px;}
+        h1, h2, h3 {letter-spacing:-0.02em;}
         [data-testid="stMetric"] {border:1px solid rgba(128,128,128,.18); border-radius:16px; padding:14px 16px; background:rgba(128,128,128,.045);}
         [data-testid="stMetricLabel"] {font-weight:600; opacity:.82;}
         [data-testid="stMetricValue"] {font-weight:750;}
@@ -119,13 +121,14 @@ def apply_theme() -> None:
 
 def page_header(title: str, subtitle: str, eyebrow: str = "TRADING LAB 2.0") -> None:
     st.markdown(
-        f'<div class="lab-hero"><div class="lab-eyebrow">{html.escape(eyebrow)}</div><div class="lab-title">{html.escape(title)}</div><div class="lab-subtitle">{html.escape(subtitle)}</div></div>',
+        f'<div class="lab-hero"><div class="lab-eyebrow">{html.escape(str(eyebrow))}</div><div class="lab-title">{html.escape(str(title))}</div><div class="lab-subtitle">{html.escape(str(subtitle))}</div></div>',
         unsafe_allow_html=True,
     )
 
 
 def _scalar(value: Any) -> Any:
-    """Return a single scalar without ever asking pandas objects for truthiness."""
+    if value is None:
+        return None
     if isinstance(value, pd.DataFrame):
         if value.empty:
             return None
@@ -133,22 +136,45 @@ def _scalar(value: Any) -> Any:
     if isinstance(value, pd.Series):
         if value.empty:
             return None
-        non_null = value.dropna()
-        return _scalar(non_null.iloc[0] if not non_null.empty else None)
+        for item in value.tolist():
+            item = _scalar(item)
+            if item is None:
+                continue
+            try:
+                if pd.isna(item):
+                    continue
+            except Exception:
+                pass
+            return item
+        return None
     if isinstance(value, (list, tuple)):
-        return _scalar(value[0]) if len(value) else None
+        if len(value) == 0:
+            return None
+        return _scalar(value[0])
     return value
 
 
-def strategy_health(profit_factor: Any, trades: Any, return_pct: Any) -> tuple[str, str]:
+def _number(value: Any) -> float | None:
+    scalar = _scalar(value)
+    if scalar is None:
+        return None
     try:
-        pf_raw, n_raw, ret_raw = _scalar(profit_factor), _scalar(trades), _scalar(return_pct)
-        if pf_raw is None or n_raw is None or ret_raw is None:
-            return "N/D", "status-na"
-        pf, n, ret = float(pf_raw), float(n_raw), float(ret_raw)
-        if pd.isna(pf) or pd.isna(n) or pd.isna(ret):
-            return "N/D", "status-na"
+        number = float(scalar)
     except (TypeError, ValueError):
+        return None
+    try:
+        if pd.isna(number):
+            return None
+    except Exception:
+        return None
+    return number
+
+
+def strategy_health(profit_factor: Any, trades: Any, return_pct: Any) -> tuple[str, str]:
+    pf = _number(profit_factor)
+    n = _number(trades)
+    ret = _number(return_pct)
+    if pf is None or n is None or ret is None:
         return "N/D", "status-na"
     if n >= 80 and pf >= 1.5 and ret > 0:
         return "Robusta", "status-good"
@@ -159,52 +185,36 @@ def strategy_health(profit_factor: Any, trades: Any, return_pct: Any) -> tuple[s
     return "Campione piccolo", "status-na"
 
 
-def render_strategy_card(strategy: str, row: pd.Series | dict[str, Any] | pd.DataFrame | None = None) -> None:
+def render_strategy_card(strategy: str, row: dict[str, Any] | None = None) -> None:
     meta = STRATEGY_INFO.get(strategy, {"label": strategy, "summary": "Descrizione non disponibile.", "signals": [], "best_for": "N/D", "weak_when": "N/D"})
-    if row is None:
-        row_data: Any = {}
-    elif isinstance(row, pd.DataFrame):
-        row_data = row.iloc[0] if not row.empty else {}
-    else:
-        row_data = row
+    data = row if isinstance(row, dict) else {}
 
-    def get_value(key: str) -> Any:
-        if hasattr(row_data, "get"):
-            return _scalar(row_data.get(key))
-        return None
-
-    pf = get_value("profit_factor")
-    trades = get_value("trades")
-    ret = get_value("return_pct")
-    wr = get_value("win_rate")
+    pf = _number(data.get("profit_factor"))
+    trades = _number(data.get("trades"))
+    ret = _number(data.get("return_pct"))
+    wr = _number(data.get("win_rate"))
     health, klass = strategy_health(pf, trades, ret)
 
-    def fmt(value: Any, suffix: str = "") -> str:
-        scalar = _scalar(value)
-        if scalar is None:
-            return "N/D"
-        try:
-            number = float(scalar)
-            if pd.isna(number):
-                return "N/D"
-            return f"{number:.2f}{suffix}"
-        except (TypeError, ValueError):
-            return "N/D"
+    def fmt(value: float | None, suffix: str = "") -> str:
+        return "N/D" if value is None else f"{value:.2f}{suffix}"
 
-    pills = "".join(f'<span class="pill">{html.escape(str(x))}</span>' for x in meta["signals"][:5])
+    signals = list(meta.get("signals", []))
+    pills = "".join(f'<span class="pill">{html.escape(str(x))}</span>' for x in signals[:5])
+    label = html.escape(str(meta.get("label", strategy)))
+    summary = html.escape(str(meta.get("summary", "N/D")))
     card_html = (
         '<div class="strategy-card">'
-        f'<div class="strategy-name">{html.escape(str(meta["label"]))} <span title="{html.escape(str(meta["summary"]))}">ⓘ</span></div>'
+        f'<div class="strategy-name">{label} <span title="{summary}">ⓘ</span></div>'
         f'<div class="strategy-meta"><span class="pill {klass}">{health}</span> PF {fmt(pf)} · Return {fmt(ret, "%")} · Win {fmt(wr, "%")} · N {fmt(trades)}</div>'
-        f'<div style="font-size:.91rem; opacity:.82; margin-bottom:12px;">{html.escape(str(meta["summary"]))}</div>'
+        f'<div style="font-size:.91rem; opacity:.82; margin-bottom:12px;">{summary}</div>'
         f'<div>{pills}</div></div>'
     )
     st.markdown(card_html, unsafe_allow_html=True)
-    with st.expander("Come funziona e quando usarla"):
-        st.markdown(f"**Funziona meglio:** {meta['best_for']}")
-        st.markdown(f"**Tende a soffrire:** {meta['weak_when']}")
-        st.markdown("**Input principali:** " + ", ".join(meta["signals"]))
+    with st.expander("COME FUNZIONA E QUANDO USARLA"):
+        st.markdown(f"**Funziona meglio:** {meta.get('best_for', 'N/D')}")
+        st.markdown(f"**Tende a soffrire:** {meta.get('weak_when', 'N/D')}")
+        st.markdown("**Input principali:** " + ", ".join(str(x) for x in signals))
 
 
 def info_help(label: str, text: str) -> None:
-    st.markdown(f'**{html.escape(label)}** <span title="{html.escape(text)}">ⓘ</span>', unsafe_allow_html=True)
+    st.markdown(f'**{html.escape(str(label))}** <span title="{html.escape(str(text))}">ⓘ</span>', unsafe_allow_html=True)
