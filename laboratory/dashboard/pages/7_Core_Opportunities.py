@@ -1,3 +1,4 @@
+import html
 import sys
 from pathlib import Path
 
@@ -62,9 +63,34 @@ def _pct_html(value) -> str:
     return f'<span style="color:{color};font-weight:800">{float(value):+.2f}%</span>'
 
 
+def _payload(row) -> dict:
+    value = row.get("payload")
+    return value if isinstance(value, dict) else {}
+
+
+def _field(row, column: str, *payload_aliases: str):
+    value = row.get(column)
+    try:
+        if value is not None and not pd.isna(value):
+            return value
+    except Exception:
+        if value is not None:
+            return value
+    payload = _payload(row)
+    for key in payload_aliases:
+        candidate = payload.get(key)
+        try:
+            if candidate is not None and not pd.isna(candidate):
+                return candidate
+        except Exception:
+            if candidate is not None:
+                return candidate
+    return None
+
+
 def tv_url(row, market: str) -> str:
     ticker = str(row.get("ticker") or "").upper()
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    payload = _payload(row)
     if market.upper() == "ITALY":
         ticker = ticker.replace(".MI", "")
         return f"https://www.tradingview.com/chart/?symbol=MIL:{ticker}"
@@ -74,20 +100,25 @@ def tv_url(row, market: str) -> str:
     return f"https://www.tradingview.com/chart/?symbol={ticker}"
 
 
+def _missing(row) -> list[str]:
+    value = row.get("missing_gates")
+    return [str(x) for x in value] if isinstance(value, list) else []
+
+
 def _reason(row) -> str:
     state = str(row.get("operational_state") or "N/D")
     signal_class = str(row.get("signal_class") or "N/D")
-    missing = row.get("missing_gates")
-    missing_txt = ", ".join(str(x) for x in missing) if isinstance(missing, list) and missing else "none"
+    missing = _missing(row)
+    missing_txt = ", ".join(missing) if missing else "none"
     if signal_class == "BUY NOW":
         return "Core decision is BUY NOW: tutti i gate richiesti dal motore risultano superati."
     if signal_class == "BUY LIMIT":
         return "Core decision is BUY LIMIT: setup operativo valido al prezzo limite definito dal motore."
     if state == "READY_FOR_TRIGGER":
-        return "PRE-BUY HIGH: struttura, score/RR e controlli non-trigger sono validi; manca la conferma del trigger."
+        return "PRE-BUY HIGH: i gate non-trigger risultano validi; manca la conferma del trigger."
     if state == "SCORE_MARGINAL":
         return "PRE-BUY HIGH Italy: R/R e struttura sono validi, ma lo score è ancora marginale rispetto alla soglia BUY."
-    return f"High-conviction state from Core. Missing gates: {missing_txt}."
+    return f"PRE-BUY HIGH indica readiness elevata, non BUY eseguibile. Missing gates: {missing_txt}."
 
 
 try:
@@ -127,13 +158,13 @@ for market in ["USA", "ITALY"]:
     block["Oggi %"] = [x[3] for x in snapshots]
     block["Company"] = block.get("company_name", pd.Series(index=block.index)).fillna("N/D")
     block["Status"] = block.get("signal_class", pd.Series(index=block.index)).fillna("N/D")
-    block["Buy Range"] = block.apply(lambda r: f"{_money(r.get('buy_zone_low'), market)} – {_money(r.get('buy_zone_high'), market)}", axis=1)
+    block["Buy Range"] = block.apply(lambda r: f"{_money(_field(r, 'buy_zone_low', 'buy_zone_low', 'buy_range_low', 'entry_low'), market)} – {_money(_field(r, 'buy_zone_high', 'buy_zone_high', 'buy_range_high', 'entry_high'), market)}", axis=1)
     block["Min / Max"] = block.apply(lambda r: f"{_money(r.get('Min'), market)} – {_money(r.get('Max'), market)}", axis=1)
-    block["Entry"] = block.get("entry", pd.Series(index=block.index)).map(lambda v: _money(v, market))
-    block["SL"] = block.get("stop", pd.Series(index=block.index)).map(lambda v: _money(v, market))
-    block["TP1"] = block.get("tp1", pd.Series(index=block.index)).map(lambda v: _money(v, market))
-    block["TP2"] = block.get("tp2", pd.Series(index=block.index)).map(lambda v: _money(v, market))
-    block["Net R/R"] = block.get("net_rr_tp2", pd.Series(index=block.index)).map(fmt_rr)
+    block["Entry"] = block.apply(lambda r: _money(_field(r, "entry", "entry", "ideal_entry", "entry_price", "proposed_entry"), market), axis=1)
+    block["SL"] = block.apply(lambda r: _money(_field(r, "stop", "stop", "stop_loss", "proposed_stop"), market), axis=1)
+    block["TP1"] = block.apply(lambda r: _money(_field(r, "tp1", "tp1", "target1"), market), axis=1)
+    block["TP2"] = block.apply(lambda r: _money(_field(r, "tp2", "tp2", "target2", "target", "proposed_target"), market), axis=1)
+    block["Net R/R"] = block.apply(lambda r: fmt_rr(_field(r, "net_rr_tp2", "net_rr_tp2", "rr_net_tp2", "net_rr", "rr")), axis=1)
     block["Chart"] = block.apply(lambda r: tv_url(r, market), axis=1)
 
     table = block[["ticker", "Company", "Status", "Current Price", "Oggi %", "Min / Max", "Buy Range", "Entry", "SL", "TP1", "TP2", "Net R/R", "Chart"]].copy()
@@ -141,12 +172,7 @@ for market in ["USA", "ITALY"]:
     table["Current Price"] = table["Current Price"].map(lambda v: _money(v, market))
     table["Oggi %"] = table["Oggi %"].map(_pct_text)
 
-    st.dataframe(
-        table,
-        use_container_width=True,
-        hide_index=True,
-        column_config={"Chart": st.column_config.LinkColumn("TradingView", display_text="Open")},
-    )
+    st.dataframe(table, use_container_width=True, hide_index=True, column_config={"Chart": st.column_config.LinkColumn("TradingView", display_text="Open")})
 
     info_cols = st.columns(min(len(block), 4))
     for idx, (_, row) in enumerate(block.iterrows()):
@@ -156,11 +182,21 @@ for market in ["USA", "ITALY"]:
                 st.markdown(f"**{ticker} · {row.get('company_name') or 'N/D'}**")
                 st.write(f"Status: **{row.get('signal_class', 'N/D')}**")
                 st.markdown(
-                    f"**Current:** {_money(row.get('Current Price'), market)} · "
-                    f"**Min:** {_money(row.get('Min'), market)} · "
-                    f"**Max:** {_money(row.get('Max'), market)} · "
-                    f"**Oggi:** {_pct_html(row.get('Oggi %'))}",
-                    unsafe_allow_html=True,
+                    '<div style="line-height:1.7">'
+                    f'<b>Current:</b> {html.escape(_money(row.get("Current Price"), market))} &nbsp;·&nbsp; '
+                    f'<b>Min:</b> {html.escape(_money(row.get("Min"), market))} &nbsp;·&nbsp; '
+                    f'<b>Max:</b> {html.escape(_money(row.get("Max"), market))} &nbsp;·&nbsp; '
+                    f'<b>Oggi:</b> {_pct_html(row.get("Oggi %"))}'
+                    '</div>', unsafe_allow_html=True,
+                )
+                st.write(
+                    f"Entry / Max Buy: **{_money(_field(row, 'entry', 'entry', 'ideal_entry', 'entry_price', 'proposed_entry'), market)} / "
+                    f"{_money(_field(row, 'max_buy', 'max_buy', 'max_entry'), market)}**"
+                )
+                st.write(
+                    f"Stop / TP1 / TP2: **{_money(_field(row, 'stop', 'stop', 'stop_loss', 'proposed_stop'), market)} / "
+                    f"{_money(_field(row, 'tp1', 'tp1', 'target1'), market)} / "
+                    f"{_money(_field(row, 'tp2', 'tp2', 'target2', 'target', 'proposed_target'), market)}**"
                 )
                 if pd.notna(row.get("prebuy_score")):
                     st.write(f"PRE-BUY Score: **{int(float(row.get('prebuy_score')))}/10**")
@@ -169,11 +205,14 @@ for market in ["USA", "ITALY"]:
                 if pd.notna(row.get("quality_score")):
                     st.write(f"Quality Score: **{fmt_score(row.get('quality_score'))}**")
                 st.write(f"Operational: **{row.get('operational_state') or 'N/D'}**")
-                st.write(f"Net R/R TP2: **{fmt_rr(row.get('net_rr_tp2'))}**")
-                missing = row.get("missing_gates")
-                if isinstance(missing, list):
-                    st.write(f"Missing Gates: **{', '.join(str(x) for x in missing) if missing else 'none'}**")
+                st.write(f"Net R/R TP2: **{fmt_rr(_field(row, 'net_rr_tp2', 'net_rr_tp2', 'rr_net_tp2', 'net_rr', 'rr'))}**")
+                missing = _missing(row)
+                st.write(f"Missing Gates: **{', '.join(missing) if missing else 'none'}**")
+                if any("rr" in x.lower() for x in missing):
+                    st.warning("R/R gate non ancora superato: PRE-BUY HIGH indica readiness elevata, non un BUY eseguibile.")
                 st.info(_reason(row))
-                st.caption(f"Core snapshot: {row.get('created_at', 'N/D')} · Run {row.get('run_id', 'N/D')}")
+                snapshot = pd.to_datetime(row.get("created_at"), errors="coerce", utc=True)
+                snapshot_text = snapshot.strftime("%d/%m/%Y %H:%M UTC") if pd.notna(snapshot) else "N/D"
+                st.caption(f"Snapshot: {snapshot_text} · Run {row.get('run_id', 'N/D')}")
 
 st.caption("Source: Core high-conviction persistence. Current/Min/Max/% Oggi are cached market-data context; Signal Price remains stored in the DB for audit.")
