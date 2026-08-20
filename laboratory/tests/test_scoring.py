@@ -1,5 +1,5 @@
-from laboratory.src.lab.scoring import ladder_decision, weighted_score
-from laboratory.src.lab.models import Decision
+from lab.scoring import ladder_decision, weighted_score
+from lab.models import Decision
 
 
 def test_failed_gate_always_rejects():
