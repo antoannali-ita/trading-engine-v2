@@ -9,10 +9,12 @@ SRC = LAB_ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from lab.auth import require_dashboard_auth
 from lab.db import get_supabase_client
 
 
 st.set_page_config(page_title="Trading Lab", layout="wide")
+require_dashboard_auth()
 st.title("Trading Lab | Control Room")
 
 try:
