@@ -89,8 +89,7 @@ def _field(row, column: str, *payload_aliases: str):
 
 
 def _requirements(row) -> dict:
-    payload = _payload(row)
-    value = payload.get("_buy_requirements")
+    value = _payload(row).get("_buy_requirements")
     return value if isinstance(value, dict) else {}
 
 
@@ -101,6 +100,39 @@ def _num(value):
         return float(value)
     except Exception:
         return None
+
+
+def _bool(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes", "y"}:
+        return True
+    if text in {"false", "0", "no", "n"}:
+        return False
+    return None
+
+
+def _tri_and(*values):
+    if any(v is False for v in values):
+        return False
+    if values and all(v is True for v in values):
+        return True
+    return None
+
+
+def _gt(a, b):
+    return None if a is None or b is None else a > b
+
+
+def _ge(a, b):
+    return None if a is None or b is None else a >= b
+
+
+def _status_icon(value) -> str:
+    return "✅" if value is True else "❌" if value is False else "➖"
 
 
 def tv_url(row, market: str) -> str:
@@ -119,8 +151,7 @@ def _missing(row) -> list[str]:
     value = row.get("missing_gates")
     if isinstance(value, list):
         return [str(x).strip().lower() for x in value if str(x).strip()]
-    payload = _payload(row)
-    fallback = payload.get("prebuy_missing")
+    fallback = _payload(row).get("prebuy_missing")
     return [str(x).strip().lower() for x in fallback] if isinstance(fallback, list) else []
 
 
@@ -172,6 +203,97 @@ def _gate_rows(row, market: str) -> list[dict]:
     ]
 
 
+def _trigger_snapshot(row) -> dict:
+    """Rebuild the Core trigger checklist only from the persisted Core snapshot."""
+    payload = _payload(row)
+    price = _num(payload.get("price"))
+    if price is None:
+        price = _num(row.get("signal_price"))
+    last_open = _num(payload.get("last_open"))
+    prev_close = _num(payload.get("prev_close"))
+    sma20 = _num(payload.get("ma20"))
+    rvol = _num(payload.get("relative_volume"))
+    zone_low = _num(_field(row, "buy_zone_low", "buy_zone_low", "buy_range_low", "entry_low"))
+    zone_high = _num(_field(row, "buy_zone_high", "buy_zone_high", "buy_range_high", "entry_high"))
+
+    in_zone = _bool(payload.get("in_buy_zone"))
+    if in_zone is None and price is not None and zone_low is not None and zone_high is not None:
+        in_zone = zone_low <= price <= zone_high
+
+    price_gt_open = _gt(price, last_open)
+    price_gt_prev = _gt(price, prev_close)
+    rvol_080 = _ge(rvol, 0.80)
+    price_gt_sma20 = _gt(price, sma20)
+    rvol_100 = _ge(rvol, 1.00)
+
+    path_a = _tri_and(in_zone, price_gt_open, price_gt_prev, rvol_080)
+    path_b = _tri_and(in_zone, price_gt_sma20, rvol_100)
+    confirmed = True if path_a is True or path_b is True else False if path_a is False and path_b is False else None
+
+    return {
+        "price": price,
+        "last_open": last_open,
+        "prev_close": prev_close,
+        "sma20": sma20,
+        "rvol": rvol,
+        "zone_low": zone_low,
+        "zone_high": zone_high,
+        "in_zone": in_zone,
+        "price_gt_open": price_gt_open,
+        "price_gt_prev": price_gt_prev,
+        "rvol_080": rvol_080,
+        "price_gt_sma20": price_gt_sma20,
+        "rvol_100": rvol_100,
+        "path_a": path_a,
+        "path_b": path_b,
+        "confirmed": confirmed,
+        "reason": payload.get("trigger_reason"),
+    }
+
+
+def _render_trigger_confirmation(row, market: str) -> None:
+    snap = _trigger_snapshot(row)
+    p = snap["price"]
+    op = snap["last_open"]
+    prev = snap["prev_close"]
+    sma20 = snap["sma20"]
+    rvol = snap["rvol"]
+
+    st.markdown("**TRIGGER CONFIRMATION · CORE SNAPSHOT**")
+    st.caption("Usa i valori dello stesso Master Scan che ha prodotto WAITING/CONFIRMED; il Current live mostrato sopra è solo contesto.")
+
+    zone_text = "YES" if snap["in_zone"] is True else "NO" if snap["in_zone"] is False else "N/D"
+    zone_ref = f"{_money(snap['zone_low'], market)} – {_money(snap['zone_high'], market)}"
+    st.markdown(f"{_status_icon(snap['in_zone'])} **In Buy Zone:** {zone_text} <span style='opacity:.68'>({html.escape(zone_ref)} required)</span>", unsafe_allow_html=True)
+
+    st.markdown("**Path A · Positive Candle + Volume**")
+    st.markdown(
+        f"{_status_icon(snap['price_gt_open'])} Price {_money(p, market)} > Open {_money(op, market)}  \\n"
+        f"{_status_icon(snap['price_gt_prev'])} Price {_money(p, market)} > Previous Close {_money(prev, market)}  \\n"
+        f"{_status_icon(snap['rvol_080'])} Relative Volume {('N/D' if rvol is None else f'{rvol:.2f}')} (≥0.80)"
+    )
+    path_a_text = "PASS" if snap["path_a"] is True else "NOT CONFIRMED" if snap["path_a"] is False else "N/D"
+    st.caption(f"Path A: {path_a_text}")
+
+    st.markdown("**Path B · SMA20 Reclaim + Strong Volume**")
+    st.markdown(
+        f"{_status_icon(snap['price_gt_sma20'])} Price {_money(p, market)} > SMA20 {_money(sma20, market)}  \\n"
+        f"{_status_icon(snap['rvol_100'])} Relative Volume {('N/D' if rvol is None else f'{rvol:.2f}')} (≥1.00)"
+    )
+    path_b_text = "PASS" if snap["path_b"] is True else "NOT CONFIRMED" if snap["path_b"] is False else "N/D"
+    st.caption(f"Path B: {path_b_text}")
+
+    if snap["confirmed"] is True:
+        st.success("Trigger condition satisfied in the persisted Core snapshot: Path A OR Path B passed while price was in Buy Zone.")
+    elif snap["confirmed"] is False:
+        st.warning("Per diventare CONFIRMED: il prezzo deve restare in Buy Zone e deve passare Path A oppure Path B.")
+    else:
+        st.info("Trigger details partially N/D in this snapshot. The next Master Scan will refresh the persisted Core values.")
+
+    if snap.get("reason"):
+        st.caption(f"Core trigger reason: {snap['reason']}")
+
+
 def _render_buy_checklist(row, market: str) -> None:
     gates = _gate_rows(row, market)
     passed = sum(1 for gate in gates if gate["ok"])
@@ -186,6 +308,8 @@ def _render_buy_checklist(row, market: str) -> None:
             f"<span style='opacity:.68'>({html.escape(str(gate['requirement']))})</span>",
             unsafe_allow_html=True,
         )
+        if gate["name"] == "Trigger":
+            _render_trigger_confirmation(row, market)
 
     readiness_color = "#15803d" if passed == total else "#b45309"
     st.markdown(
@@ -277,7 +401,12 @@ for market in ["USA", "ITALY"]:
     table["Current Price"] = table["Current Price"].map(lambda v: _money(v, market))
     table["Oggi %"] = table["Oggi %"].map(_pct_text)
 
-    st.dataframe(table, use_container_width=True, hide_index=True, column_config={"Chart": st.column_config.LinkColumn("TradingView", display_text="Open")})
+    st.dataframe(
+        table,
+        use_container_width=True,
+        hide_index=True,
+        column_config={"Chart": st.column_config.LinkColumn("TradingView", display_text="Open")},
+    )
 
     info_cols = st.columns(min(len(block), 4))
     for idx, (_, row) in enumerate(block.iterrows()):
@@ -292,7 +421,8 @@ for market in ["USA", "ITALY"]:
                     f'<b>Min:</b> {html.escape(_money(row.get("Min"), market))} &nbsp;·&nbsp; '
                     f'<b>Max:</b> {html.escape(_money(row.get("Max"), market))} &nbsp;·&nbsp; '
                     f'<b>Oggi:</b> {_pct_html(row.get("Oggi %"))}'
-                    '</div>', unsafe_allow_html=True,
+                    '</div>',
+                    unsafe_allow_html=True,
                 )
                 st.write(
                     f"Entry / Max Buy: **{_money(_field(row, 'entry', 'entry', 'ideal_entry', 'entry_price', 'proposed_entry'), market)} / "
