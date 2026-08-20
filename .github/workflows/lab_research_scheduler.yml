@@ -1,0 +1,51 @@
+name: Strategy Lab Weekly Research
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 6 * * 6"
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout strategy lab branch
+        uses: actions/checkout@v4
+        with:
+          ref: strategy-lab-v1
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: laboratory/requirements.txt
+
+      - name: Install
+        working-directory: laboratory
+        run: pip install -r requirements.txt
+
+      - name: Unit tests
+        working-directory: laboratory
+        run: pytest -q tests
+
+      - name: Run weekly research
+        working-directory: laboratory
+        env:
+          LAB_START: "2020-01-01"
+          LAB_SYMBOLS: "SPY,QQQ,AAPL,MSFT,NVDA,PGR,AXP,CVS,ADBE,NVO"
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python jobs/run_lab.py
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: strategy-lab-weekly-${{ github.run_id }}
+          path: laboratory/results/
+          retention-days: 30
