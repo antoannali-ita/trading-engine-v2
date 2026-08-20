@@ -7,104 +7,266 @@ import pandas as pd
 import streamlit as st
 
 
-UI_BUILD = "2026.08.20-2246"
+UI_BUILD = "2026.08.20-2305"
 COPYRIGHT_TEXT = "Questo sito è stato prodotto da Antonio Larocca · Tutti i diritti riservati."
 
 COMPANY_NAMES = {
     "AAPL": "Apple Inc.",
     "ADBE": "Adobe Inc.",
+    "AMZN": "Amazon.com Inc.",
+    "AMD": "Advanced Micro Devices Inc.",
+    "ASML": "ASML Holding N.V.",
+    "AVGO": "Broadcom Inc.",
     "AXP": "American Express Co.",
+    "BKNG": "Booking Holdings Inc.",
     "BUD": "Anheuser-Busch InBev",
+    "CAT": "Caterpillar Inc.",
+    "COST": "Costco Wholesale Corp.",
+    "CRM": "Salesforce Inc.",
     "CSCO": "Cisco Systems Inc.",
     "CVS": "CVS Health Corp.",
+    "CVX": "Chevron Corp.",
     "FTNT": "Fortinet Inc.",
+    "GE": "GE Aerospace",
     "GOOG": "Alphabet Inc.",
     "GOOGL": "Alphabet Inc.",
+    "GS": "Goldman Sachs Group Inc.",
+    "HD": "Home Depot Inc.",
+    "JPM": "JPMorgan Chase & Co.",
+    "LIN": "Linde plc",
+    "LLY": "Eli Lilly and Co.",
+    "MA": "Mastercard Inc.",
     "META": "Meta Platforms Inc.",
     "MSFT": "Microsoft Corp.",
     "MUFG": "Mitsubishi UFJ Financial Group",
+    "NFLX": "Netflix Inc.",
     "NVDA": "NVIDIA Corp.",
     "NVO": "Novo Nordisk A/S",
+    "ORCL": "Oracle Corp.",
+    "PANW": "Palo Alto Networks Inc.",
     "PGR": "Progressive Corp.",
     "QQQ": "Invesco QQQ Trust",
+    "RTX": "RTX Corp.",
     "SPY": "SPDR S&P 500 ETF Trust",
     "TJX": "TJX Companies Inc.",
+    "TSM": "Taiwan Semiconductor Manufacturing Co.",
+    "UBER": "Uber Technologies Inc.",
+    "UNH": "UnitedHealth Group Inc.",
+    "V": "Visa Inc.",
+    "WMT": "Walmart Inc.",
+    "XOM": "Exxon Mobil Corp.",
 }
 
 STRATEGY_INFO = {
     "trend_continuation": {
-        "label": "Trend Continuation",
-        "summary": "Cerca titoli già in trend positivo e prova a entrare su continuazione o pullback ordinati, evitando di inseguire prezzi troppo estesi.",
-        "signals": ["Prezzo vs SMA50/SMA200", "Pullback su SMA50", "ATR", "Momentum 60d", "Volume relativo", "Breakout 20d"],
+        "label": "Continuazione del trend",
+        "summary": "Cerca titoli già in trend positivo e prova a entrare su continuazione o ritracciamenti ordinati, evitando prezzi troppo estesi.",
+        "signals": ["Prezzo vs SMA50/SMA200", "Ritracciamento su SMA50", "ATR", "Momentum 60g", "Volume relativo", "Breakout 20g"],
         "best_for": "Trend direzionali puliti e leadership persistente.",
         "weak_when": "Mercato laterale, falsi breakout, inversioni rapide.",
     },
     "cross_sectional_momentum": {
-        "label": "Momentum",
-        "summary": "Premia i titoli con forza relativa recente. La versione attuale è una ricerca v1 e la vera classifica cross-sectional sull'intero universo va ancora completata.",
-        "signals": ["Return 20d", "Return 60d", "Return 120d", "Ranking momentum"],
-        "best_for": "Regimi risk-on con leadership stabile.",
-        "weak_when": "Rotazioni violente e mean reversion improvvisa.",
+        "label": "Forza relativa",
+        "summary": "Premia i titoli più forti rispetto all'universo. La versione v2 dovrà usare una vera classifica cross-sectional sullo stesso giorno.",
+        "signals": ["Rendimento 20g", "Rendimento 60g", "Rendimento 120g", "Classifica relativa"],
+        "best_for": "Regimi rialzisti con leadership stabile.",
+        "weak_when": "Rotazioni violente e inversioni improvvise.",
     },
     "short_term_reversal": {
-        "label": "Short-Term Reversal",
+        "label": "Rimbalzo di breve periodo",
         "summary": "Cerca eccessi ribassisti di breve periodo dentro una struttura di fondo ancora accettabile, puntando a un rimbalzo controllato.",
-        "signals": ["RSI14", "Distanza da SMA20", "ATR", "Trend lungo", "Stabilizzazione daily"],
-        "best_for": "Sell-off tecnici non accompagnati da rottura strutturale.",
-        "weak_when": "Crolli fondamentali, gap negativi, downtrend persistenti.",
+        "signals": ["RSI14", "Distanza da SMA20", "ATR", "Trend lungo", "Stabilizzazione giornaliera"],
+        "best_for": "Vendite tecniche non accompagnate da rottura strutturale.",
+        "weak_when": "Crolli fondamentali, gap negativi, trend ribassisti persistenti.",
     },
     "defensive_low_vol_quality": {
-        "label": "Defensive Low Vol",
-        "summary": "Favorisce titoli meno volatili, sopra la media lunga e con momentum ancora positivo. Il quality overlay fondamentale completo è previsto in una fase successiva.",
-        "signals": ["Volatilità 20d", "SMA200", "ATR%", "Momentum 60d"],
+        "label": "Difensiva a bassa volatilità",
+        "summary": "Favorisce titoli meno volatili, sopra la media lunga e con momentum ancora positivo. Il filtro fondamentale completo arriverà in una fase successiva.",
+        "signals": ["Volatilità 20g", "SMA200", "ATR%", "Momentum 60g"],
         "best_for": "Fasi difensive o mercati incerti con preferenza per stabilità.",
-        "weak_when": "Bull market molto aggressivi dominati da beta elevato.",
+        "weak_when": "Mercati rialzisti molto aggressivi dominati da beta elevato.",
     },
     "pead": {
-        "label": "PEAD",
-        "summary": "Post-Earnings Announcement Drift: cerca la continuazione dopo sorprese trimestrali positive o negative, usando solo dati point-in-time.",
-        "signals": ["EPS surprise", "Revenue surprise", "Revisioni analisti", "Età evento", "Reazione post-earnings"],
-        "best_for": "Earnings con sorpresa credibile e revisioni coerenti.",
+        "label": "PEAD · deriva post utili",
+        "summary": "Cerca la continuazione dopo sorprese trimestrali positive o negative usando esclusivamente dati point-in-time.",
+        "signals": ["Sorpresa EPS", "Sorpresa ricavi", "Revisioni analisti", "Età evento", "Reazione post utili"],
+        "best_for": "Trimestrali con sorpresa credibile e revisioni coerenti.",
         "weak_when": "Dati evento incompleti o reazioni già completamente assorbite.",
     },
     "event_driven_mean_reversion": {
-        "label": "Event Mean Reversion",
-        "summary": "Cerca eccessi di prezzo dopo eventi non binari, quando la reazione appare sproporzionata rispetto al normale comportamento del titolo.",
-        "signals": ["Event return", "Volume z-score", "Reazione giorno 1", "Filtro eventi binari"],
+        "label": "Rientro dopo evento",
+        "summary": "Cerca eccessi di prezzo dopo eventi non binari, quando la reazione appare sproporzionata rispetto al comportamento normale del titolo.",
+        "signals": ["Rendimento evento", "Volume z-score", "Reazione giorno 1", "Filtro eventi binari"],
         "best_for": "Shock temporanei e non strutturali.",
         "weak_when": "Eventi binari o cambiamenti permanenti del business.",
     },
     "quality_value_rerating": {
-        "label": "Quality Value Rerating",
-        "summary": "Combina qualità economica, crescita, leva e sconto di valutazione per cercare rerating di società solide ma non care.",
-        "signals": ["FCF yield", "ROIC", "Revenue growth", "EPS growth", "Net Debt/EBITDA", "Valuation discount"],
-        "best_for": "Normalizzazione multipli e miglioramento degli utili.",
-        "weak_when": "Value trap e deterioramento strutturale del business.",
+        "label": "Qualità e valore",
+        "summary": "Combina qualità economica, crescita, leva e sconto di valutazione per cercare rivalutazioni di società solide ma non care.",
+        "signals": ["FCF yield", "ROIC", "Crescita ricavi", "Crescita EPS", "Debito netto/EBITDA", "Sconto valutativo"],
+        "best_for": "Normalizzazione dei multipli e miglioramento degli utili.",
+        "weak_when": "Trappole value e deterioramento strutturale del business.",
     },
     "macro_intermarket": {
-        "label": "Macro Intermarket",
-        "summary": "Integra trend e impulsi macro per capire quali asset o settori sono coerenti con tassi, credito, commodity e dollaro.",
-        "signals": ["Trend score", "Rates impulse", "Credit impulse", "Commodity impulse", "USD impulse", "Macro fit"],
+        "label": "Macro intermercato",
+        "summary": "Integra trend e impulsi macro per capire quali asset o settori sono coerenti con tassi, credito, materie prime e dollaro.",
+        "signals": ["Punteggio trend", "Impulso tassi", "Impulso credito", "Impulso materie prime", "Impulso USD", "Coerenza macro"],
         "best_for": "Regimi macro riconoscibili e persistenti.",
         "weak_when": "Transizioni di regime rapide o segnali macro conflittuali.",
     },
+}
+
+STATUS_LABELS = {
+    "PAPER_OPEN": "SIMULAZIONE APERTA",
+    "OPEN": "APERTA",
+    "TP1_HIT": "TP1 RAGGIUNTO",
+    "PRE_BUY": "PRE-ACQUISTO",
+    "PRE_BUY_HIGH": "PRE-ACQUISTO ALTO",
+    "NEAR_SETUP": "VICINO AL SETUP",
+    "WATCH": "OSSERVA",
+    "CONFIRMED": "CONFERMATO",
+    "WAITING": "IN ATTESA",
+    "BLOCKED": "BLOCCATO",
+    "BLOCKED_DATA": "BLOCCATO PER DATI",
+    "REJECTED": "SCARTATO",
+    "PROMOTABLE": "PROMOVIBILE",
+    "CANDIDATE": "CANDIDATA",
+    "BENCHMARK": "BENCHMARK",
+    "SHADOW_BUY": "ACQUISTO SIMULATO",
+    "BUY NOW": "ACQUISTA ORA",
+    "BUY LIMIT": "ACQUISTO LIMIT",
+    "AVOID": "EVITA",
+}
+
+REGIME_LABELS = {
+    "BULL_QUIET": "RIALZISTA CALMO",
+    "BULL_VOLATILE": "RIALZISTA VOLATILE",
+    "RANGE_NEUTRAL": "LATERALE / NEUTRALE",
+    "NEUTRAL": "NEUTRALE",
+    "BEAR_HIGH_VOL": "RIBASSISTA / ALTA VOLATILITÀ",
+    "BEAR": "RIBASSISTA",
+}
+
+QUALITY_LABELS = {"GREEN": "VERDE", "YELLOW": "GIALLO", "RED": "ROSSO"}
+
+COLUMN_LABELS = {
+    "created_at": "Data/ora",
+    "last_seen_at": "Ultimo aggiornamento",
+    "last_checked_date": "Ultimo controllo",
+    "signal_date": "Data segnale",
+    "source_signal_date": "Data segnale origine",
+    "opened_at": "Apertura",
+    "symbol": "Ticker",
+    "ticker": "Ticker",
+    "azienda": "Azienda",
+    "company_name_display": "Azienda",
+    "market": "Mercato",
+    "horizon": "Orizzonte",
+    "strategy": "Strategia",
+    "parent_strategy": "Strategia madre",
+    "status": "Stato",
+    "source_signal_status": "Stato segnale",
+    "trade_status": "Stato posizione",
+    "decision": "Decisione",
+    "score": "Punteggio",
+    "score_total": "Punteggio totale",
+    "strategy_score": "Punteggio strategia",
+    "trade_score": "Punteggio operazione",
+    "portfolio_fit": "Idoneità portafoglio",
+    "portfolio_fit_score": "Idoneità portafoglio",
+    "trigger": "Conferma",
+    "setup": "Configurazione tecnica",
+    "price": "Prezzo",
+    "entry": "Ingresso",
+    "entry_price": "Prezzo ingresso",
+    "proposed_entry": "Ingresso proposto",
+    "buy_range_low": "Acquisto min",
+    "buy_range_high": "Acquisto max",
+    "max_buy": "Prezzo massimo",
+    "stop": "Stop",
+    "stop_initial": "Stop iniziale",
+    "stop_current": "Stop attuale",
+    "proposed_stop": "Stop proposto",
+    "tp1": "TP1",
+    "tp2": "TP2",
+    "proposed_target": "Target proposto",
+    "last_price": "Ultimo prezzo",
+    "exit_price": "Prezzo uscita",
+    "qty": "Quantità",
+    "capital": "Capitale",
+    "gross_pnl": "P&L lordo",
+    "net_pnl": "P&L netto",
+    "return_pct": "Rendimento",
+    "win_rate": "Percentuale successi",
+    "profit_factor": "Profit Factor",
+    "trades": "Operazioni",
+    "rr_net_tp1": "R/R netto TP1",
+    "rr_net_tp2": "R/R netto TP2",
+    "distance_to_entry_pct": "Distanza ingresso",
+    "alert_type": "Tipo avviso",
+    "alert_price": "Prezzo avviso",
+    "reason": "Motivo",
+    "data_quality": "Qualità dati",
+    "regime": "Regime",
+    "regime_state": "Regime",
+    "gate_result": "Esito controlli",
+    "ret_d1": "Rendimento D+1",
+    "ret_d3": "Rendimento D+3",
+    "ret_d5": "Rendimento D+5",
+    "ret_d10": "Rendimento D+10",
+    "ret_d20": "Rendimento D+20",
+    "ret_d60": "Rendimento D+60",
+    "excess_ret_d1": "Extra rendimento D+1 vs SPY",
+    "excess_ret_d3": "Extra rendimento D+3 vs SPY",
+    "excess_ret_d5": "Extra rendimento D+5 vs SPY",
+    "excess_ret_d10": "Extra rendimento D+10 vs SPY",
+    "excess_ret_d20": "Extra rendimento D+20 vs SPY",
+    "excess_ret_d60": "Extra rendimento D+60 vs SPY",
+    "mfe_pct": "MFE %",
+    "mae_pct": "MAE %",
+    "mfe_r": "MFE in R",
+    "mae_r": "MAE in R",
+    "bars_to_mfe": "Barre fino a MFE",
+    "bars_to_mae": "Barre fino a MAE",
+    "block_reasons": "Motivi blocco",
+    "position_id": "ID posizione",
+    "event_type": "Evento",
+    "old_stop": "Stop precedente",
+    "new_stop": "Nuovo stop",
+    "note": "Nota",
+    "run_timestamp": "Data/ora esecuzione",
+    "run_id": "ID esecuzione",
+    "engine_version": "Versione motore",
+    "candidates_count": "Candidati",
+    "variant_id": "ID variante",
+    "generation": "Generazione",
+    "promoted_to_core": "Promossa al Core",
+    "mutation_reason": "Motivo modifica",
+    "parameters": "Parametri",
+    "notes": "Note",
+    "entry_score": "Punteggio ingresso",
+    "atr_stop_mult": "Moltiplicatore ATR stop",
+    "target_r_multiple": "Target in R",
+    "train_return_pct": "Rendimento training",
+    "test_return_pct": "Rendimento test",
+    "test_trades": "Operazioni test",
 }
 
 
 def _sidebar_navigation() -> None:
     st.sidebar.markdown("## 📈 TRADING LAB")
     st.sidebar.caption("DECISIONE · RISCHIO · RICERCA")
-    st.sidebar.page_link("app.py", label="🏠  CONTROL ROOM")
+    st.sidebar.page_link("app.py", label="🏠  PANNELLO OPERATIVO")
     st.sidebar.page_link("pages/1_Signals.py", label="🎯  OPPORTUNITÀ")
-    st.sidebar.page_link("pages/5_Action_Center.py", label="⚡  ACTION CENTER")
+    st.sidebar.page_link("pages/5_Action_Center.py", label="⚡  CENTRO OPERATIVO")
     st.sidebar.page_link("pages/2_Portfolio.py", label="💼  PORTAFOGLIO")
     st.sidebar.markdown("---")
-    st.sidebar.caption("ANALISI & RICERCA")
-    st.sidebar.page_link("pages/6_Backtest_Research.py", label="🧪  STRATEGY LAB")
-    st.sidebar.page_link("pages/3_Laboratory.py", label="📊  SIGNAL OUTCOMES")
-    st.sidebar.page_link("pages/4_Engine_Health.py", label="🩺  ENGINE HEALTH")
+    st.sidebar.caption("ANALISI E RICERCA")
+    st.sidebar.page_link("pages/6_Backtest_Research.py", label="🧪  RICERCA STRATEGIE")
+    st.sidebar.page_link("pages/3_Laboratory.py", label="📊  ESITI DEI SEGNALI")
+    st.sidebar.page_link("pages/4_Engine_Health.py", label="🩺  STATO DEL MOTORE")
     st.sidebar.markdown("---")
-    st.sidebar.caption(f"BUILD {UI_BUILD}")
+    st.sidebar.caption(f"VERSIONE INTERFACCIA {UI_BUILD}")
     st.sidebar.caption("© 2026 Antonio Larocca · Tutti i diritti riservati.")
 
 
@@ -228,9 +390,36 @@ def fmt_qty(value: Any) -> str:
     return "N/D" if number is None else f"{int(number)}"
 
 
+def fmt_status(value: Any) -> str:
+    text = "N/D" if value is None else str(value).strip().upper()
+    return STATUS_LABELS.get(text, text.replace("_", " "))
+
+
+def fmt_strategy(value: Any) -> str:
+    key = "" if value is None else str(value).strip()
+    return STRATEGY_INFO.get(key, {}).get("label", key.replace("_", " ").strip().title() or "N/D")
+
+
+def fmt_regime(value: Any) -> str:
+    text = "N/D" if value is None else str(value).strip().upper()
+    return REGIME_LABELS.get(text, text.replace("_", " "))
+
+
+def fmt_quality(value: Any) -> str:
+    text = "N/D" if value is None else str(value).strip().upper()
+    return QUALITY_LABELS.get(text, text)
+
+
 def fmt_trigger(value: Any) -> str:
     text = "N/D" if value is None else str(value).strip().upper().replace("_", " ")
-    mapping = {"CONFIRMED": "CONFERMATO", "WAITING": "ATTENDI", "BUY ZONE": "BUY ZONE", "ENTRY REACHED": "ENTRY RAGGIUNTA"}
+    mapping = {
+        "CONFIRMED": "CONFERMATO",
+        "WAITING": "ATTENDI",
+        "WAIT": "ATTENDI",
+        "BUY ZONE": "ZONA ACQUISTO",
+        "ENTRY REACHED": "INGRESSO RAGGIUNTO",
+        "INVALID": "INVALIDO",
+    }
     return mapping.get(text, text)
 
 
@@ -238,7 +427,7 @@ def trigger_class(trigger: str) -> str:
     t = str(trigger).upper()
     if "CONFERMATO" in t or "CONFIRMED" in t:
         return "trigger-confirmed"
-    if "BUY" in t or "ENTRY" in t:
+    if "ACQUISTO" in t or "INGRESSO" in t or "BUY" in t or "ENTRY" in t:
         return "trigger-buy"
     return "trigger-wait"
 
@@ -258,44 +447,74 @@ def candidate_title(ticker: Any, supplied_company: Any = None) -> str:
     return f'{html.escape(t)} <span class="company-name">{html.escape(company)}</span>'
 
 
-def strategy_health(row: pd.Series) -> tuple[str, str]:
-    trades = _number(row.get("trades")) or 0
-    pf = _number(row.get("profit_factor"))
-    ret = _number(row.get("total_return_pct"))
-    if trades < 5:
+def localize_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Translate only the presentation layer. Database and engine field names remain unchanged."""
+    out = df.copy()
+    for col in ["strategy", "parent_strategy"]:
+        if col in out:
+            out[col] = out[col].map(fmt_strategy)
+    for col in ["status", "source_signal_status", "trade_status", "decision"]:
+        if col in out:
+            out[col] = out[col].map(fmt_status)
+    if "trigger" in out:
+        out["trigger"] = out["trigger"].map(fmt_trigger)
+    for col in ["regime", "regime_state"]:
+        if col in out:
+            out[col] = out[col].map(fmt_regime)
+    if "data_quality" in out:
+        out["data_quality"] = out["data_quality"].map(fmt_quality)
+    return out.rename(columns={c: COLUMN_LABELS[c] for c in out.columns if c in COLUMN_LABELS})
+
+
+def strategy_health(row_or_pf: Any, trades: Any = None, ret: Any = None) -> tuple[str, str]:
+    if isinstance(row_or_pf, pd.Series):
+        trades_n = _number(row_or_pf.get("trades")) or 0
+        pf = _number(row_or_pf.get("profit_factor"))
+        ret_n = _number(row_or_pf.get("total_return_pct", row_or_pf.get("return_pct")))
+    else:
+        pf = _number(row_or_pf)
+        trades_n = _number(trades) or 0
+        ret_n = _number(ret)
+    if trades_n < 5:
         return "DATI LIMITATI", "status-na"
-    if pf is not None and pf >= 1.5 and ret is not None and ret > 0:
-        return "ROBUSTA V1", "status-good"
-    if pf is not None and pf >= 1.0 and ret is not None and ret >= 0:
+    if pf is not None and pf >= 1.5 and ret_n is not None and ret_n > 0:
+        return "ROBUSTA", "status-good"
+    if pf is not None and pf >= 1.0 and ret_n is not None and ret_n >= 0:
         return "DA VALIDARE", "status-mid"
     return "DEBOLE", "status-bad"
 
 
-def render_strategy_card(name: str, results: pd.DataFrame, paper: pd.DataFrame) -> None:
-    info = STRATEGY_INFO.get(name, {"label": name, "summary": "N/D", "signals": [], "best_for": "N/D", "weak_when": "N/D"})
-    r = results[results["strategy"] == name].copy() if not results.empty and "strategy" in results else pd.DataFrame()
-    p = paper[paper["strategy"] == name].copy() if not paper.empty and "strategy" in paper else pd.DataFrame()
+def render_strategy_card(name: str, results: Any, paper: pd.DataFrame | None = None) -> None:
+    info = STRATEGY_INFO.get(name, {"label": fmt_strategy(name), "summary": "N/D", "signals": [], "best_for": "N/D", "weak_when": "N/D"})
 
-    if r.empty:
-        status, cls = "IN ATTESA", "status-na"
-        avg_pf, avg_ret, trades = None, None, 0
+    if isinstance(results, dict):
+        trades = int(_number(results.get("trades")) or 0)
+        avg_pf = _number(results.get("profit_factor"))
+        avg_ret = _number(results.get("return_pct"))
+        status, cls = strategy_health(avg_pf, trades, avg_ret)
+        paper_count = 0
+        latest_state = "N/D"
     else:
-        trades = int(pd.to_numeric(r.get("trades"), errors="coerce").fillna(0).sum())
-        avg_pf = pd.to_numeric(r.get("profit_factor"), errors="coerce").replace([float("inf"), float("-inf")], pd.NA).dropna().mean()
-        avg_ret = pd.to_numeric(r.get("total_return_pct"), errors="coerce").dropna().mean()
-        summary = pd.Series({"trades": trades, "profit_factor": avg_pf, "total_return_pct": avg_ret})
-        status, cls = strategy_health(summary)
+        r = results[results["strategy"] == name].copy() if isinstance(results, pd.DataFrame) and not results.empty and "strategy" in results else pd.DataFrame()
+        p = paper[paper["strategy"] == name].copy() if isinstance(paper, pd.DataFrame) and not paper.empty and "strategy" in paper else pd.DataFrame()
+        if r.empty:
+            status, cls = "IN ATTESA", "status-na"
+            avg_pf, avg_ret, trades = None, None, 0
+        else:
+            trades = int(pd.to_numeric(r.get("trades"), errors="coerce").fillna(0).sum())
+            avg_pf = pd.to_numeric(r.get("profit_factor"), errors="coerce").replace([float("inf"), float("-inf")], pd.NA).dropna().mean()
+            avg_ret = pd.to_numeric(r.get("total_return_pct", r.get("return_pct")), errors="coerce").dropna().mean()
+            status, cls = strategy_health(avg_pf, trades, avg_ret)
+        paper_count = len(p)
+        latest_state = fmt_status(p.iloc[0].get("status")) if not p.empty else "N/D"
 
-    paper_count = len(p)
-    latest_state = p.iloc[0].get("status") if not p.empty else "N/D"
     signal_text = " · ".join(info.get("signals", [])[:4])
-
     st.markdown(
         f'<div class="strategy-card"><div class="strategy-name">{html.escape(info["label"])}</div>'
-        f'<div class="strategy-meta"><span class="pill {cls}">{status}</span><span class="pill">Paper {paper_count}</span><span class="pill">{html.escape(str(latest_state))}</span></div>'
+        f'<div class="strategy-meta"><span class="pill {cls}">{status}</span><span class="pill">Segnali simulati {paper_count}</span><span class="pill">{html.escape(str(latest_state))}</span></div>'
         f'<div style="font-size:.84rem;line-height:1.44;opacity:.88">{html.escape(info["summary"])}</div>'
         f'<div style="font-size:.72rem;line-height:1.4;opacity:.64;margin-top:8px">{html.escape(signal_text)}</div>'
-        f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px;font-size:.72rem"><div><b>Trade</b><br>{trades}</div><div><b>PF medio</b><br>{fmt_num(avg_pf,2)}</div><div><b>Return medio</b><br>{fmt_pct(avg_ret)}</div></div>'
+        f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px;font-size:.72rem"><div><b>Operazioni</b><br>{trades}</div><div><b>PF medio</b><br>{fmt_num(avg_pf,2)}</div><div><b>Rendimento medio</b><br>{fmt_pct(avg_ret)}</div></div>'
         f'<div style="font-size:.71rem;line-height:1.36;opacity:.66;margin-top:9px"><b>Funziona meglio:</b> {html.escape(info["best_for"])}<br><b>Debole quando:</b> {html.escape(info["weak_when"])}</div></div>',
         unsafe_allow_html=True,
     )
