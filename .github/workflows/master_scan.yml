@@ -10,6 +10,9 @@ on:
         options:
           - usa
           - italy
+  push:
+    paths:
+      - '.github/workflows/master_scan.yml'
   schedule:
     - cron: '40 15 * * 1-5'
     - cron: '0 17 * * 1-5'
@@ -29,9 +32,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # Shared runtime namespace: Master Scan and Fast Monitor must see the same
-      # SQLite/snapshots/state. Previously they used unrelated cache prefixes,
-      # so Fast Monitor could miss the latest Master Scan candidates.
       - name: Restore / save CORE runtime data
         uses: actions/cache@v4
         with:
@@ -52,6 +52,8 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             MARKET="${{ inputs.market }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            MARKET="usa"
           elif [ "${{ github.event.schedule }}" = "40 15 * * 1-5" ]; then
             MARKET="italy"
           elif [ "${{ github.event.schedule }}" = "0 17 * * 1-5" ]; then
@@ -63,24 +65,6 @@ jobs:
           echo "market=$MARKET" >> "$GITHUB_OUTPUT"
           echo "Selected market: $MARKET"
 
-      - name: Show runtime configuration
-        shell: bash
-        env:
-          TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
-          GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
-          GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
-          GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
-          WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
-          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
-        run: |
-          echo "MARKET=${{ steps.market.outputs.market }}"
-          echo "TRADING_CAPITAL=${TRADING_CAPITAL:-MISSING}"
-          [ -n "$GMAIL_SENDER" ] && echo "GMAIL_SENDER=CONFIGURED" || echo "GMAIL_SENDER=MISSING"
-          [ -n "$GMAIL_RECIPIENT" ] && echo "GMAIL_RECIPIENT=CONFIGURED" || echo "GMAIL_RECIPIENT=MISSING"
-          [ -n "$GMAIL_PASSWORD" ] && echo "GMAIL_PASSWORD=CONFIGURED" || echo "GMAIL_PASSWORD=MISSING"
-          [ -n "$WHATSAPP_NUMBER" ] && echo "WHATSAPP_NUMBER=CONFIGURED" || echo "WHATSAPP_NUMBER=MISSING"
-          [ -n "$CALLMEBOT_APIKEY" ] && echo "CALLMEBOT_APIKEY=CONFIGURED" || echo "CALLMEBOT_APIKEY=MISSING"
-
       - name: Run Master Scan
         shell: bash
         env:
@@ -91,6 +75,8 @@ jobs:
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
           TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
           PORTFOLIO_POSITIONS_JSON: ${{ secrets.PORTFOLIO_POSITIONS_JSON }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: |
           echo "Starting MASTER_SCAN for ${{ steps.market.outputs.market }}"
           python -m monitor.master_scan --market "${{ steps.market.outputs.market }}"
