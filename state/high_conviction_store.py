@@ -31,6 +31,14 @@ def _pick(c: Dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def _list_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(x) for x in value if str(x).strip()]
+    return [str(value)] if str(value).strip() else []
+
+
 def _json_safe(value: Any) -> Any:
     if value is None or isinstance(value, (str, bool, int)):
         return value
@@ -117,9 +125,7 @@ def _payload(
     reference=None,
     regime: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    failed = _pick(c, "failed_gates", "prebuy_missing") or []
-    if not isinstance(failed, list):
-        failed = [str(failed)]
+    failed = list(dict.fromkeys(_list_values(c.get("failed_gates")) + _list_values(c.get("prebuy_missing"))))
 
     raw_payload = _json_safe(c)
     if not isinstance(raw_payload, dict):
@@ -191,12 +197,9 @@ def persist_high_conviction(
     try:
         db = create_client(url, key)
         if rows:
-            # Write the new snapshot first. If this fails, the previous valid active
-            # snapshot remains visible instead of disappearing from the dashboard.
             db.table("core_high_conviction_signals").upsert(rows, on_conflict="run_id,market,ticker").execute()
             db.table("core_high_conviction_signals").update({"active": False}).eq("market", market_norm).eq("active", True).neq("run_id", rid).execute()
         else:
-            # A successful scan with zero high-conviction names is a valid new state.
             db.table("core_high_conviction_signals").update({"active": False}).eq("market", market_norm).eq("active", True).execute()
         return {"written": len(rows), "skipped": False, "reason": None}
     except Exception as exc:
