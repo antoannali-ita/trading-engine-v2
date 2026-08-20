@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
 import yaml
 
 from engine.analyzer import run_full_scan
 from notifications.email_client import send_email
+from state.high_conviction_store import persist_high_conviction
 
 
 def load_cfg(market):
@@ -17,6 +17,24 @@ def load_cfg(market):
         (root / f"config/{market.lower()}.yaml").read_text()
     ) or {}
     return {**common, **specific}
+
+
+def _enrich_presentation_fields(market: str, ref, selected):
+    """Attach existing engine presentation fields needed by persistence.
+
+    This does not alter ranking, gates or decisions. USA reuses prebuy_engine;
+    Italy reuses operational_state semantics already produced by its engine.
+    """
+    enriched = []
+    for original in selected:
+        c = dict(original)
+        if market == "usa" and ref is not None and hasattr(ref, "prebuy_engine"):
+            try:
+                c.update(ref.prebuy_engine(c))
+            except Exception as exc:
+                print(f"WARN prebuy enrichment {c.get('ticker')}: {type(exc).__name__}: {exc}")
+        enriched.append(c)
+    return enriched
 
 
 def main():
@@ -63,6 +81,15 @@ def main():
             c.get("display_state"),
         )
 
+    if not a.no_persist:
+        persistence_selected = _enrich_presentation_fields(a.market, ref, selected)
+        hc = persist_high_conviction(result.get("run_id"), a.market, persistence_selected)
+        print(
+            "CORE_HIGH_CONVICTION "
+            f"market={a.market.upper()} written={hc.get('written', 0)} "
+            f"skipped={hc.get('skipped', False)} reason={hc.get('reason') or 'OK'}"
+        )
+
     if cfg.get("send_email") and ref is not None:
         html = ref.generate_html(
             selected,
@@ -72,9 +99,6 @@ def main():
             result["dropped"],
         )
 
-        # ------------------------------------------------------------
-        # IDENTIFICAZIONE ENGINE / REPOSITORY
-        # ------------------------------------------------------------
         footer = f"""
         <hr style="margin-top:30px;border:0;border-top:1px solid #cccccc;">
         <div style="
