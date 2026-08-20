@@ -1,0 +1,43 @@
+name: Strategy Lab Daily Paper Signals
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 21 * * 1-5"
+
+permissions:
+  contents: read
+
+jobs:
+  paper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout strategy lab branch
+        uses: actions/checkout@v4
+        with:
+          ref: strategy-lab-v1
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: laboratory/requirements.txt
+
+      - name: Install
+        working-directory: laboratory
+        run: pip install -r requirements.txt
+
+      - name: Unit tests
+        working-directory: laboratory
+        run: pytest -q tests
+
+      - name: Generate paper signals
+        working-directory: laboratory
+        env:
+          LAB_SYMBOLS: "SPY,QQQ,AAPL,MSFT,NVDA,PGR,AXP,CVS,ADBE,NVO"
+          LAB_PAPER_SCORE: "75"
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python jobs/run_paper_signals.py
