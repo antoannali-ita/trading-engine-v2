@@ -136,6 +136,7 @@ def persist_high_conviction(run_id: Optional[str], market: str, selected: Iterab
         return {"written": 0, "skipped": True, "reason": f"supabase_import:{exc}"}
 
     rid = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    market_norm = market.upper()
     rows = []
     for c in selected:
         signal_class = classify_high_conviction(market, c)
@@ -144,9 +145,14 @@ def persist_high_conviction(run_id: Optional[str], market: str, selected: Iterab
 
     try:
         db = create_client(url, key)
-        db.table("core_high_conviction_signals").update({"active": False}).eq("market", market.upper()).eq("active", True).execute()
         if rows:
+            # Write the new snapshot first. If this fails, the previous valid active
+            # snapshot remains visible instead of disappearing from the dashboard.
             db.table("core_high_conviction_signals").upsert(rows, on_conflict="run_id,market,ticker").execute()
+            db.table("core_high_conviction_signals").update({"active": False}).eq("market", market_norm).eq("active", True).neq("run_id", rid).execute()
+        else:
+            # A successful scan with zero high-conviction names is a valid new state.
+            db.table("core_high_conviction_signals").update({"active": False}).eq("market", market_norm).eq("active", True).execute()
         return {"written": len(rows), "skipped": False, "reason": None}
     except Exception as exc:
         return {"written": 0, "skipped": True, "reason": f"persist_failed:{type(exc).__name__}:{exc}"}
