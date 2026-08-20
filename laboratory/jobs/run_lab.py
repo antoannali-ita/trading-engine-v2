@@ -15,8 +15,8 @@ if str(SRC) not in sys.path:
 
 from lab.backtest_engine import BacktestConfig, run_backtest
 from lab.market_data import MarketDataRequest, download_prices
+from lab.research_store import finish_backtest_run, save_backtest_results, start_backtest_run, supabase_configured
 from lab.strategies import DataRequired, STRATEGIES
-
 
 DEFAULT_SYMBOLS = ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "PGR", "AXP", "CVS", "ADBE", "NVO"]
 PRICE_STRATEGIES = [name for name, spec in STRATEGIES.items() if spec.generator is not None]
@@ -33,10 +33,13 @@ def main() -> int:
     symbols = _symbols()
     output = LAB_ROOT / "results" / run_id
     output.mkdir(parents=True, exist_ok=True)
-
     rows: list[dict] = []
     failures: list[dict] = []
     cfg = BacktestConfig()
+    db_enabled = supabase_configured()
+
+    if db_enabled:
+        start_backtest_run(run_id, symbols, PRICE_STRATEGIES)
 
     for symbol in symbols:
         try:
@@ -44,7 +47,6 @@ def main() -> int:
         except Exception as exc:
             failures.append({"symbol": symbol, "stage": "market_data", "error": str(exc)})
             continue
-
         for strategy in PRICE_STRATEGIES:
             try:
                 trades, metrics = run_backtest(symbol, prices, strategy, cfg)
@@ -66,8 +68,18 @@ def main() -> int:
         "strategies_executed": PRICE_STRATEGIES,
         "strategies_waiting_for_data": [name for name, spec in STRATEGIES.items() if spec.generator is None],
         "failures": failures,
+        "supabase_persistence": db_enabled,
     }
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    if db_enabled:
+        try:
+            save_backtest_results(run_id, rows)
+            finish_backtest_run(run_id, "COMPLETED" if rows else "FAILED", json.dumps(failures)[:5000] if failures else None)
+        except Exception as exc:
+            failures.append({"stage": "supabase_persistence", "error": str(exc)})
+            print(f"Supabase persistence failed: {exc}")
+
     print(json.dumps(manifest, indent=2))
     if not results.empty:
         print(results.to_string(index=False))
