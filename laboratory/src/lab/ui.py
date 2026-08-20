@@ -7,8 +7,29 @@ import pandas as pd
 import streamlit as st
 
 
-UI_BUILD = "2026.08.20-2055"
+UI_BUILD = "2026.08.20-2115"
 COPYRIGHT_TEXT = "Questo sito è stato prodotto da Antonio Larocca · Tutti i diritti riservati."
+
+COMPANY_NAMES = {
+    "AAPL": "Apple Inc.",
+    "ADBE": "Adobe Inc.",
+    "AXP": "American Express Co.",
+    "BUD": "Anheuser-Busch InBev",
+    "CSCO": "Cisco Systems Inc.",
+    "CVS": "CVS Health Corp.",
+    "FTNT": "Fortinet Inc.",
+    "GOOG": "Alphabet Inc.",
+    "GOOGL": "Alphabet Inc.",
+    "META": "Meta Platforms Inc.",
+    "MSFT": "Microsoft Corp.",
+    "MUFG": "Mitsubishi UFJ Financial Group",
+    "NVDA": "NVIDIA Corp.",
+    "NVO": "Novo Nordisk A/S",
+    "PGR": "Progressive Corp.",
+    "QQQ": "Invesco QQQ Trust",
+    "SPY": "SPDR S&P 500 ETF Trust",
+    "TJX": "TJX Companies Inc.",
+}
 
 STRATEGY_INFO = {
     "trend_continuation": {
@@ -93,29 +114,36 @@ def apply_theme() -> None:
         <style>
         [data-testid="stSidebarNav"] {display:none;}
         [data-testid="stSidebar"] {border-right:1px solid rgba(128,128,128,.14);}
-        [data-testid="stSidebar"] .stPageLink {margin-bottom:.15rem;}
-        [data-testid="stSidebar"] .stPageLink a {border-radius:10px; padding:.5rem .62rem; font-weight:700; letter-spacing:.02em;}
+        [data-testid="stSidebar"] .stPageLink {margin-bottom:.12rem;}
+        [data-testid="stSidebar"] .stPageLink a {border-radius:9px; padding:.44rem .58rem; font-weight:700; letter-spacing:.02em;}
         [data-testid="stSidebar"] .stPageLink a:hover {background:rgba(99,102,241,.09);}
-        .block-container {padding-top:1.6rem; padding-bottom:5.2rem; max-width:1500px;}
+        .block-container {padding-top:1.35rem; padding-bottom:5.2rem; max-width:1500px;}
         h1, h2, h3 {letter-spacing:-0.02em;}
-        [data-testid="stMetric"] {border:1px solid rgba(128,128,128,.18); border-radius:14px; padding:10px 12px; background:rgba(128,128,128,.045); min-height:82px;}
-        [data-testid="stMetricLabel"] {font-weight:600; opacity:.78; font-size:.76rem;}
-        [data-testid="stMetricValue"] {font-weight:750; font-size:1.55rem; line-height:1.1;}
-        .lab-hero {border:1px solid rgba(128,128,128,.18); border-radius:22px; padding:22px 24px; margin-bottom:18px; background:linear-gradient(135deg, rgba(99,102,241,.12), rgba(14,165,233,.05));}
-        .lab-eyebrow {font-size:.75rem; letter-spacing:.12em; text-transform:uppercase; opacity:.62; font-weight:700;}
-        .lab-title {font-size:2rem; font-weight:800; margin-top:4px;}
-        .lab-subtitle {font-size:1rem; opacity:.74; margin-top:5px; max-width:900px;}
-        .strategy-card {border:1px solid rgba(128,128,128,.18); border-radius:18px; padding:18px; min-height:210px; background:rgba(128,128,128,.035);}
-        .strategy-name {font-size:1.05rem; font-weight:760; margin-bottom:4px;}
-        .strategy-meta {font-size:.8rem; opacity:.68; margin-bottom:10px;}
-        .pill {display:inline-block; padding:4px 9px; border-radius:999px; font-size:.73rem; font-weight:700; margin-right:5px; margin-bottom:5px; background:rgba(99,102,241,.12);}
+        [data-testid="stMetric"] {border:1px solid rgba(128,128,128,.18); border-radius:12px; padding:7px 9px; background:rgba(128,128,128,.035); min-height:66px;}
+        [data-testid="stMetricLabel"] {font-weight:600; opacity:.76; font-size:.68rem;}
+        [data-testid="stMetricValue"] {font-weight:750; font-size:1.22rem; line-height:1.05; overflow:visible; white-space:normal; word-break:normal;}
+        .lab-hero {border:1px solid rgba(128,128,128,.18); border-radius:20px; padding:18px 21px; margin-bottom:15px; background:linear-gradient(135deg, rgba(99,102,241,.12), rgba(14,165,233,.05));}
+        .lab-eyebrow {font-size:.70rem; letter-spacing:.12em; text-transform:uppercase; opacity:.62; font-weight:700;}
+        .lab-title {font-size:1.75rem; font-weight:800; margin-top:3px;}
+        .lab-subtitle {font-size:.91rem; opacity:.74; margin-top:4px; max-width:900px;}
+        .strategy-card {border:1px solid rgba(128,128,128,.18); border-radius:16px; padding:15px; min-height:190px; background:rgba(128,128,128,.035);}
+        .strategy-name {font-size:1rem; font-weight:760; margin-bottom:4px;}
+        .strategy-meta {font-size:.76rem; opacity:.68; margin-bottom:9px;}
+        .pill {display:inline-block; padding:3px 8px; border-radius:999px; font-size:.69rem; font-weight:700; margin-right:4px; margin-bottom:4px; background:rgba(99,102,241,.12);}
         .status-good {background:rgba(34,197,94,.14);}
         .status-mid {background:rgba(234,179,8,.16);}
         .status-bad {background:rgba(239,68,68,.13);}
         .status-na {background:rgba(148,163,184,.16);}
-        div[data-testid="stDataFrame"] {border:1px solid rgba(128,128,128,.13); border-radius:14px; overflow:hidden;}
-        .candidate-detail {font-size:.82rem; opacity:.78; line-height:1.45; margin-top:.25rem;}
-        .site-footer {position:fixed; left:0; right:0; bottom:0; z-index:999; padding:.55rem 1rem; text-align:center; font-size:.76rem; opacity:.78; backdrop-filter:blur(10px); background:rgba(250,250,250,.88); border-top:1px solid rgba(128,128,128,.14);}
+        div[data-testid="stDataFrame"] {border:1px solid rgba(128,128,128,.13); border-radius:12px; overflow:hidden;}
+        .candidate-title {font-size:1.02rem; font-weight:780; margin:0 0 .15rem 0; line-height:1.18;}
+        .company-name {font-size:.76rem; opacity:.66; font-weight:500; margin-left:.2rem;}
+        .candidate-state {font-size:.70rem; opacity:.62; margin:.05rem 0 .45rem 0; text-transform:uppercase; letter-spacing:.02em;}
+        .candidate-detail {font-size:.74rem; opacity:.80; line-height:1.42; margin-top:.20rem;}
+        .trigger-badge {display:inline-block; padding:3px 7px; border-radius:8px; font-size:.70rem; font-weight:800; line-height:1.1; white-space:normal;}
+        .trigger-confirmed {background:rgba(34,197,94,.13);}
+        .trigger-wait {background:rgba(234,179,8,.15);}
+        .trigger-buy {background:rgba(59,130,246,.12);}
+        .site-footer {position:fixed; left:0; right:0; bottom:0; z-index:999; padding:.50rem 1rem; text-align:center; font-size:.72rem; opacity:.78; backdrop-filter:blur(10px); background:rgba(250,250,250,.88); border-top:1px solid rgba(128,128,128,.14);}
         @media (prefers-color-scheme: dark) {.site-footer {background:rgba(14,17,23,.88);}}
         </style>
         """,
@@ -200,7 +228,8 @@ def fmt_qty(value: Any) -> str:
 
 
 def fmt_trigger(value: Any) -> str:
-    text = str(_scalar(value) or "N/D").strip().upper().replace("_", " ")
+    scalar = _scalar(value)
+    text = "N/D" if scalar is None else str(scalar).strip().upper().replace("_", " ")
     mapping = {
         "WAITING": "ATTENDI",
         "WAIT": "ATTENDI",
@@ -209,6 +238,33 @@ def fmt_trigger(value: Any) -> str:
         "INVALID": "INVALIDO",
     }
     return mapping.get(text, text)
+
+
+def trigger_class(value: Any) -> str:
+    trigger = fmt_trigger(value)
+    if trigger == "CONFERMATO":
+        return "trigger-confirmed"
+    if trigger == "ATTENDI":
+        return "trigger-wait"
+    if trigger == "BUY ZONE":
+        return "trigger-buy"
+    return ""
+
+
+def company_name(ticker: Any, row_company_name: Any = None) -> str:
+    supplied = _scalar(row_company_name)
+    if supplied is not None and str(supplied).strip() and str(supplied).strip().upper() not in {"NONE", "N/D", "NAN"}:
+        return str(supplied).strip()
+    key = str(_scalar(ticker) or "").strip().upper()
+    return COMPANY_NAMES.get(key, "")
+
+
+def candidate_title(ticker: Any, row_company_name: Any = None) -> str:
+    tick = str(_scalar(ticker) or "N/D").strip().upper()
+    name = company_name(tick, row_company_name)
+    if not name:
+        return html.escape(tick)
+    return f'{html.escape(tick)} <span class="company-name">— {html.escape(name)}</span>'
 
 
 def strategy_health(profit_factor: Any, trades: Any, return_pct: Any) -> tuple[str, str]:
@@ -238,7 +294,7 @@ def render_strategy_card(strategy: str, row: dict[str, Any] | None = None) -> No
     pills = "".join(f'<span class="pill">{html.escape(str(x))}</span>' for x in signals[:5])
     label = html.escape(str(meta.get("label", strategy)))
     summary = html.escape(str(meta.get("summary", "N/D")))
-    card_html = ('<div class="strategy-card">' f'<div class="strategy-name">{label} <span title="{summary}">ⓘ</span></div>' f'<div class="strategy-meta"><span class="pill {klass}">{health}</span> PF {fmt_num(pf)} · Return {fmt_pct(ret)} · Win {fmt_pct(wr)} · N {fmt_num(trades, 0)}</div>' f'<div style="font-size:.91rem; opacity:.82; margin-bottom:12px;">{summary}</div>' f'<div>{pills}</div></div>')
+    card_html = ('<div class="strategy-card">' f'<div class="strategy-name">{label} <span title="{summary}">ⓘ</span></div>' f'<div class="strategy-meta"><span class="pill {klass}">{health}</span> PF {fmt_num(pf)} · Return {fmt_pct(ret)} · Win {fmt_pct(wr)} · N {fmt_num(trades, 0)}</div>' f'<div style="font-size:.86rem; opacity:.82; margin-bottom:10px;">{summary}</div>' f'<div>{pills}</div></div>')
     st.markdown(card_html, unsafe_allow_html=True)
     with st.expander("COME FUNZIONA E QUANDO USARLA"):
         st.markdown(f"**Funziona meglio:** {meta.get('best_for', 'N/D')}")
