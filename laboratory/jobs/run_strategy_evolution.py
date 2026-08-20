@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -76,7 +76,11 @@ def main() -> int:
         promoted_votes = sum(r["verdict"] == "PROMOTABLE" for r in rows)
         coverage = positive / max(len(rows), 1)
 
-        # Family-level verdict is deliberately stricter than single-symbol verdicts.
+        critique_counts: Counter[str] = Counter()
+        for r in rows:
+            critique_counts.update(r.get("parent_critique", []))
+        critique_summary = ", ".join(f"{k}:{v}" for k, v in critique_counts.most_common()) or "N/D"
+
         if len(rows) >= 5 and mean_score >= 70 and coverage >= 0.60 and promoted_votes >= 2:
             family_status = "PROMOTABLE"
             promotable += 1
@@ -91,7 +95,7 @@ def main() -> int:
             "parent_variant_id": None,
             "generation": 1,
             "parameters": params,
-            "mutation_reason": "Grid mutation of entry threshold, ATR stop and R target after parent self-critique.",
+            "mutation_reason": f"Parent critique across universe: {critique_summary}. Generation-1 mutation varies entry threshold, ATR stop and R target.",
             "status": family_status,
             "promoted_to_core": False,
             "notes": f"mean_robustness={mean_score:.2f}; coverage={coverage:.2%}; symbols={len(rows)}; run={stamp}",
@@ -108,6 +112,7 @@ def main() -> int:
                 "single_symbol_verdict": r["verdict"],
                 "parent_parameters": r["parent_parameters"],
                 "parent_oos": parent_oos,
+                "parent_critique": r.get("parent_critique", []),
                 "family_status": family_status,
             }
             payload = {
