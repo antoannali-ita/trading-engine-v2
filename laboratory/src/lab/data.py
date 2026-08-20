@@ -21,6 +21,14 @@ def load_signals(limit: int = 1000) -> pd.DataFrame:
     return _frame(response.data)
 
 
+def load_core_high_conviction(limit: int = 500, active_only: bool = True) -> pd.DataFrame:
+    query = get_supabase_client().table("core_high_conviction_signals").select("*")
+    if active_only:
+        query = query.eq("active", True)
+    response = query.order("created_at", desc=True).limit(limit).execute()
+    return _frame(response.data)
+
+
 def load_signal_outcomes(limit: int = 2000) -> pd.DataFrame:
     supabase = get_supabase_client()
     response = supabase.table("signal_outcomes").select("*").limit(limit).execute()
