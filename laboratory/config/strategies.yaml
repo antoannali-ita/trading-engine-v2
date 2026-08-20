@@ -1,0 +1,61 @@
+version: 1
+research_only: true
+live_execution: false
+strategies:
+  trend_continuation:
+    enabled: true
+    horizon: swing
+    entry_modes: [pullback, breakout, volatility_expansion]
+    preferred_sectors: [Technology, Semiconductors, Industrials, Energy, Communication Services]
+    regimes: [bull_low_vol, bull_normal_vol, strong_trend_high_vol]
+  cross_sectional_momentum:
+    enabled: true
+    horizon: swing_position
+    preferred_sectors: [ALL, ETF]
+    regimes: [bull, trending]
+  short_term_reversal:
+    enabled: true
+    horizon: short_swing
+    preferred_sectors: [Financials, Utilities, Healthcare, ETF]
+    regimes: [sideways, high_vol_non_trending]
+  pead:
+    enabled: true
+    horizon: swing
+    preferred_sectors: [Technology, Semiconductors, Consumer, Industrials, Financials]
+    regimes: [bull, sideways]
+    requires_point_in_time_events: true
+  event_driven_mean_reversion:
+    enabled: true
+    horizon: short_swing
+    subtypes: [earnings_fade, gap_fade, non_binary_shock]
+    preferred_sectors: [Financials, Industrials, Healthcare, Consumer, mature_Technology]
+    requires_point_in_time_events: true
+  quality_value_rerating:
+    enabled: true
+    horizon: position
+    preferred_sectors: [Financials, Healthcare, Industrials, Consumer, Materials, Energy]
+    requires_point_in_time_fundamentals: true
+  defensive_low_vol_quality:
+    enabled: true
+    horizon: position
+    preferred_sectors: [Utilities, Consumer Staples, defensive_Healthcare, ETF]
+    regimes: [bear, high_vol]
+  macro_intermarket:
+    enabled: true
+    horizon: swing_position
+    preferred_sectors: [ETF, Financials, Real Estate, Utilities, Energy, Materials]
+    inputs: [rates, yield_curve, credit_spreads, oil, gas, gold, usd]
+
+layers:
+  regime_engine: true
+  hard_gates: true
+  opportunity_ladder: true
+  risk_management: true
+  paper_trading: true
+  tradingagents_ab: true
+
+phase2:
+  microstructure_lab:
+    enabled: false
+    components: [volume_profile, VAH, VAL, POC, LVN, HVN, CVD, failed_auction, acceptance_rejection]
+    requires: [tick_data, reliable_aggressor_classification]
