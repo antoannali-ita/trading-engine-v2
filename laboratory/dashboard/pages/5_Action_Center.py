@@ -150,11 +150,14 @@ watch["gate_result"] = watch.apply(lambda r: _failed_text(_details(r)), axis=1)
 
 rank = {"PAPER_OPEN": 0, "CONFIRMED": 1, "PRE_BUY": 2, "NEAR_SETUP": 3, "WATCH": 4, "BLOCKED_DATA": 8, "BENCHMARK": 9}
 watch["_rank"] = watch.get("status", pd.Series(index=watch.index, dtype=object)).fillna("").astype(str).str.upper().map(rank).fillna(7)
-watch = watch.sort_values(["_rank", "trade_score", "strategy_score"], ascending=[True, False, False]).drop(columns="_rank")
+watch = watch.sort_values(["_rank", "trade_score", "strategy_score"], ascending=[True, False, False])
 
 active_states = ["PAPER_OPEN", "CONFIRMED", "PRE_BUY", "NEAR_SETUP"]
 active = watch[watch["status"].fillna("").astype(str).str.upper().isin(active_states)].copy()
-view = active if not active.empty else watch.head(10).copy()
+raw_view = active if not active.empty else watch.head(10).copy()
+# Decision cards are ticker-centric: keep only the best-ranked strategy row per symbol.
+view = raw_view.drop_duplicates(subset=["symbol"], keep="first").copy()
+watch = watch.drop(columns="_rank")
 
 open_paper = positions.copy()
 if not positions.empty and "status" in positions:
