@@ -25,15 +25,18 @@ page_header(
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def current_price(ticker: str, market: str):
+def intraday_snapshot(ticker: str, market: str):
     symbol = ticker if market.upper() == "USA" or "." in ticker else f"{ticker}.MI"
     try:
         hist = yf.Ticker(symbol).history(period="1d", interval="5m", auto_adjust=True)
         if hist.empty or hist["Close"].dropna().empty:
-            return None
-        return float(hist["Close"].dropna().iloc[-1])
+            return None, None, None
+        current = float(hist["Close"].dropna().iloc[-1])
+        day_low = float(hist["Low"].dropna().min()) if "Low" in hist and not hist["Low"].dropna().empty else None
+        day_high = float(hist["High"].dropna().max()) if "High" in hist and not hist["High"].dropna().empty else None
+        return current, day_low, day_high
     except Exception:
-        return None
+        return None, None, None
 
 
 def _currency(market: str) -> str:
@@ -75,8 +78,15 @@ def _reason(row) -> str:
 try:
     opportunities = load_core_high_conviction(500, active_only=True)
 except Exception as exc:
-    st.error("Core high-conviction store non disponibile. Eseguire prima la migration SQL 06 e poi un Master Scan.")
-    st.code(str(exc))
+    text = str(exc)
+    if "core_high_conviction_signals" in text or "PGRST205" in text:
+        st.info("Core feed not initialized yet. Run SQL 06 in Supabase, then execute one Master Scan for USA and one for Italy.")
+        a, b, c = st.columns(3)
+        a.metric("Status", "NOT INITIALIZED")
+        b.metric("Required Step", "SQL 06")
+        c.metric("Next Step", "MASTER SCAN")
+    else:
+        st.warning("Core high-conviction feed is temporarily unavailable. The Core engine remains independent from this dashboard.")
     st.stop()
 
 if opportunities.empty:
@@ -95,10 +105,14 @@ for market in ["USA", "ITALY"]:
         continue
 
     block = block.drop_duplicates(subset=["ticker"], keep="first")
-    block["Current Price"] = [current_price(str(row.get("ticker")), market) for _, row in block.iterrows()]
+    snapshots = [intraday_snapshot(str(row.get("ticker")), market) for _, row in block.iterrows()]
+    block["Current Price"] = [x[0] for x in snapshots]
+    block["Day Low"] = [x[1] for x in snapshots]
+    block["Day High"] = [x[2] for x in snapshots]
     block["Company"] = block.get("company_name", pd.Series(index=block.index)).fillna("N/D")
     block["Status"] = block.get("signal_class", pd.Series(index=block.index)).fillna("N/D")
     block["Buy Range"] = block.apply(lambda r: f"{_money(r.get('buy_zone_low'), market)} – {_money(r.get('buy_zone_high'), market)}", axis=1)
+    block["Day Range"] = block.apply(lambda r: f"{_money(r.get('Day Low'), market)} – {_money(r.get('Day High'), market)}", axis=1)
     block["Entry"] = block.get("entry", pd.Series(index=block.index)).map(lambda v: _money(v, market))
     block["SL"] = block.get("stop", pd.Series(index=block.index)).map(lambda v: _money(v, market))
     block["TP1"] = block.get("tp1", pd.Series(index=block.index)).map(lambda v: _money(v, market))
@@ -106,7 +120,7 @@ for market in ["USA", "ITALY"]:
     block["Net R/R"] = block.get("net_rr_tp2", pd.Series(index=block.index)).map(fmt_rr)
     block["Chart"] = block.apply(lambda r: tv_url(r, market), axis=1)
 
-    table = block[["ticker", "Company", "Status", "Current Price", "Buy Range", "Entry", "SL", "TP1", "TP2", "Net R/R", "Chart"]].copy()
+    table = block[["ticker", "Company", "Status", "Current Price", "Day Range", "Buy Range", "Entry", "SL", "TP1", "TP2", "Net R/R", "Chart"]].copy()
     table = table.rename(columns={"ticker": "Ticker"})
     table["Current Price"] = table["Current Price"].map(lambda v: _money(v, market))
 
@@ -124,6 +138,7 @@ for market in ["USA", "ITALY"]:
             with st.popover(f"ℹ️ {ticker}", use_container_width=True):
                 st.markdown(f"**{ticker} · {row.get('company_name') or 'N/D'}**")
                 st.write(f"Status: **{row.get('signal_class', 'N/D')}**")
+                st.write(f"Current / Day Range: **{_money(row.get('Current Price'), market)} · {_money(row.get('Day Low'), market)} – {_money(row.get('Day High'), market)}**")
                 if pd.notna(row.get("prebuy_score")):
                     st.write(f"PRE-BUY Score: **{int(float(row.get('prebuy_score')))}/10**")
                 if pd.notna(row.get("opportunity_score")):
@@ -138,4 +153,4 @@ for market in ["USA", "ITALY"]:
                 st.info(_reason(row))
                 st.caption(f"Core snapshot: {row.get('created_at', 'N/D')} · Run {row.get('run_id', 'N/D')}")
 
-st.caption("Source: Core high-conviction persistence. Current Price is a cached market-data refresh; Signal Price remains stored in the DB for audit.")
+st.caption("Source: Core high-conviction persistence. Current Price and Day Range are cached market-data context; Signal Price remains stored in the DB for audit.")
