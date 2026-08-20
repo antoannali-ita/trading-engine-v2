@@ -63,3 +63,13 @@ def load_lab_calibration_results(limit: int = 1000) -> pd.DataFrame:
 def load_lab_paper_signals(limit: int = 1000) -> pd.DataFrame:
     response = get_supabase_client().table("lab_paper_signals").select("*").order("created_at", desc=True).limit(limit).execute()
     return _frame(response.data)
+
+
+def load_strategy_variants(limit: int = 1000) -> pd.DataFrame:
+    response = get_supabase_client().table("lab_strategy_variants").select("*").order("created_at", desc=True).limit(limit).execute()
+    return _frame(response.data)
+
+
+def load_strategy_evaluations(limit: int = 5000) -> pd.DataFrame:
+    response = get_supabase_client().table("lab_strategy_evaluations").select("*").order("created_at", desc=True).limit(limit).execute()
+    return _frame(response.data)
