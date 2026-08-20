@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 
-UI_BUILD = "2026.08.20-2045"
+UI_BUILD = "2026.08.20-2055"
 COPYRIGHT_TEXT = "Questo sito è stato prodotto da Antonio Larocca · Tutti i diritti riservati."
 
 STRATEGY_INFO = {
@@ -98,9 +98,9 @@ def apply_theme() -> None:
         [data-testid="stSidebar"] .stPageLink a:hover {background:rgba(99,102,241,.09);}
         .block-container {padding-top:1.6rem; padding-bottom:5.2rem; max-width:1500px;}
         h1, h2, h3 {letter-spacing:-0.02em;}
-        [data-testid="stMetric"] {border:1px solid rgba(128,128,128,.18); border-radius:16px; padding:14px 16px; background:rgba(128,128,128,.045);}
-        [data-testid="stMetricLabel"] {font-weight:600; opacity:.82;}
-        [data-testid="stMetricValue"] {font-weight:750;}
+        [data-testid="stMetric"] {border:1px solid rgba(128,128,128,.18); border-radius:14px; padding:10px 12px; background:rgba(128,128,128,.045); min-height:82px;}
+        [data-testid="stMetricLabel"] {font-weight:600; opacity:.78; font-size:.76rem;}
+        [data-testid="stMetricValue"] {font-weight:750; font-size:1.55rem; line-height:1.1;}
         .lab-hero {border:1px solid rgba(128,128,128,.18); border-radius:22px; padding:22px 24px; margin-bottom:18px; background:linear-gradient(135deg, rgba(99,102,241,.12), rgba(14,165,233,.05));}
         .lab-eyebrow {font-size:.75rem; letter-spacing:.12em; text-transform:uppercase; opacity:.62; font-weight:700;}
         .lab-title {font-size:2rem; font-weight:800; margin-top:4px;}
@@ -114,6 +114,7 @@ def apply_theme() -> None:
         .status-bad {background:rgba(239,68,68,.13);}
         .status-na {background:rgba(148,163,184,.16);}
         div[data-testid="stDataFrame"] {border:1px solid rgba(128,128,128,.13); border-radius:14px; overflow:hidden;}
+        .candidate-detail {font-size:.82rem; opacity:.78; line-height:1.45; margin-top:.25rem;}
         .site-footer {position:fixed; left:0; right:0; bottom:0; z-index:999; padding:.55rem 1rem; text-align:center; font-size:.76rem; opacity:.78; backdrop-filter:blur(10px); background:rgba(250,250,250,.88); border-top:1px solid rgba(128,128,128,.14);}
         @media (prefers-color-scheme: dark) {.site-footer {background:rgba(14,17,23,.88);}}
         </style>
@@ -150,9 +151,7 @@ def _scalar(value: Any) -> Any:
             return item
         return None
     if isinstance(value, (list, tuple)):
-        if len(value) == 0:
-            return None
-        return _scalar(value[0])
+        return _scalar(value[0]) if len(value) else None
     return value
 
 
@@ -170,6 +169,46 @@ def _number(value: Any) -> float | None:
     except Exception:
         return None
     return number
+
+
+def fmt_money(value: Any, symbol: str = "$", decimals: int = 2) -> str:
+    number = _number(value)
+    return "N/D" if number is None else f"{symbol}{number:,.{decimals}f}"
+
+
+def fmt_pct(value: Any, decimals: int = 2) -> str:
+    number = _number(value)
+    return "N/D" if number is None else f"{number:.{decimals}f}%"
+
+
+def fmt_num(value: Any, decimals: int = 2) -> str:
+    number = _number(value)
+    return "N/D" if number is None else f"{number:,.{decimals}f}"
+
+
+def fmt_score(value: Any) -> str:
+    return fmt_num(value, 1)
+
+
+def fmt_rr(value: Any) -> str:
+    return fmt_num(value, 2)
+
+
+def fmt_qty(value: Any) -> str:
+    number = _number(value)
+    return "N/D" if number is None else f"{int(number):,}"
+
+
+def fmt_trigger(value: Any) -> str:
+    text = str(_scalar(value) or "N/D").strip().upper().replace("_", " ")
+    mapping = {
+        "WAITING": "ATTENDI",
+        "WAIT": "ATTENDI",
+        "CONFIRMED": "CONFERMATO",
+        "BUY ZONE": "BUY ZONE",
+        "INVALID": "INVALIDO",
+    }
+    return mapping.get(text, text)
 
 
 def strategy_health(profit_factor: Any, trades: Any, return_pct: Any) -> tuple[str, str]:
@@ -195,15 +234,11 @@ def render_strategy_card(strategy: str, row: dict[str, Any] | None = None) -> No
     ret = _number(data.get("return_pct"))
     wr = _number(data.get("win_rate"))
     health, klass = strategy_health(pf, trades, ret)
-
-    def fmt(value: float | None, suffix: str = "") -> str:
-        return "N/D" if value is None else f"{value:.2f}{suffix}"
-
     signals = list(meta.get("signals", []))
     pills = "".join(f'<span class="pill">{html.escape(str(x))}</span>' for x in signals[:5])
     label = html.escape(str(meta.get("label", strategy)))
     summary = html.escape(str(meta.get("summary", "N/D")))
-    card_html = ('<div class="strategy-card">' f'<div class="strategy-name">{label} <span title="{summary}">ⓘ</span></div>' f'<div class="strategy-meta"><span class="pill {klass}">{health}</span> PF {fmt(pf)} · Return {fmt(ret, "%")} · Win {fmt(wr, "%")} · N {fmt(trades)}</div>' f'<div style="font-size:.91rem; opacity:.82; margin-bottom:12px;">{summary}</div>' f'<div>{pills}</div></div>')
+    card_html = ('<div class="strategy-card">' f'<div class="strategy-name">{label} <span title="{summary}">ⓘ</span></div>' f'<div class="strategy-meta"><span class="pill {klass}">{health}</span> PF {fmt_num(pf)} · Return {fmt_pct(ret)} · Win {fmt_pct(wr)} · N {fmt_num(trades, 0)}</div>' f'<div style="font-size:.91rem; opacity:.82; margin-bottom:12px;">{summary}</div>' f'<div>{pills}</div></div>')
     st.markdown(card_html, unsafe_allow_html=True)
     with st.expander("COME FUNZIONA E QUANDO USARLA"):
         st.markdown(f"**Funziona meglio:** {meta.get('best_for', 'N/D')}")
