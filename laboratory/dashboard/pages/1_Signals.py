@@ -32,7 +32,13 @@ st.markdown(
     .core-kpi {border:1px solid rgba(128,128,128,.20); border-radius:10px; padding:7px 9px; min-height:58px; background:rgba(128,128,128,.025);}
     .core-kpi-label {font-size:.65rem; opacity:.65; margin-bottom:3px;}
     .core-kpi-value {font-size:1rem; font-weight:760; line-height:1.18;}
-    .core-trigger {font-size:.70rem; font-weight:780; line-height:1.28; overflow-wrap:anywhere;}
+    .core-trigger-box {transition:background .15s ease,border-color .15s ease;}
+    .core-trigger-box.trigger-confirmed {background:rgba(34,197,94,.16);border-color:rgba(34,197,94,.36);}
+    .core-trigger-box.trigger-buy {background:rgba(59,130,246,.16);border-color:rgba(59,130,246,.34);}
+    .core-trigger-box.trigger-wait {background:rgba(245,158,11,.18);border-color:rgba(245,158,11,.38);}
+    .core-trigger-box.trigger-invalid {background:rgba(239,68,68,.17);border-color:rgba(239,68,68,.38);}
+    .core-trigger-box.trigger-na {background:rgba(148,163,184,.13);border-color:rgba(148,163,184,.28);}
+    .core-trigger {font-size:.70rem; font-weight:780; line-height:1.28; overflow-wrap:anywhere; background:transparent !important;}
     .core-market-strip {margin:.12rem 0 .48rem 0; padding:6px 8px; border-radius:8px; background:rgba(59,130,246,.06); font-size:.76rem; line-height:1.35;}
     .core-day-pos {font-weight:800; color:inherit;}
     .core-day-neg {font-weight:800; color:#dc2626;}
@@ -146,11 +152,12 @@ else:
                 st.markdown(f'<div class="candidate-state">{html.escape(status_text)} · {html.escape(setup_text)}</div>', unsafe_allow_html=True)
 
                 trigger = fmt_trigger(row.get("trigger"))
+                trigger_css = trigger_class(trigger)
                 st.markdown(
                     f'<div class="core-kpi-row">'
                     f'<div class="core-kpi"><div class="core-kpi-label">Score</div><div class="core-kpi-value">{fmt_score(row.get("score_total"))}</div></div>'
                     f'<div class="core-kpi"><div class="core-kpi-label">Net R/R</div><div class="core-kpi-value">{fmt_rr(row.get("rr_net_tp2"))}</div></div>'
-                    f'<div class="core-kpi"><div class="core-kpi-label">Trigger</div><div class="core-trigger {trigger_class(trigger)}">{html.escape(trigger)}</div></div>'
+                    f'<div class="core-kpi core-trigger-box {trigger_css}"><div class="core-kpi-label">Trigger</div><div class="core-trigger">{html.escape(trigger)}</div></div>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
