@@ -15,13 +15,31 @@ ENV_MAP = {
     "db_path":"__DB_PATH_NOT_ENV__", "snapshot_dir":"__SNAPSHOT_DIR_NOT_ENV__",
 }
 
+_DECISION_RANK_COMPAT = {
+    "BUY_NOW": 6,
+    "BUY_LIMIT": 5,
+    "WAIT": 4,
+    "WATCH": 3,
+    "AVOID": 1,
+    "DATA_INSUFFICIENT": 0,
+}
+
 def load_reference(cfg: Dict[str, Any]):
     # Set strategy env vars before import because baselines read configuration at module import time.
     for key, env in ENV_MAP.items():
         if env.startswith("__"): continue
         if key in cfg and cfg[key] is not None:
             os.environ[env] = str(cfg[key])
-    return importlib.import_module(cfg["reference_module"])
+    reference = importlib.import_module(cfg["reference_module"])
+
+    # Compatibility guard for the frozen Italy v1.2 baseline. The ranking helper
+    # references DECISION_RANK, but that constant was accidentally omitted when
+    # the operational-ranking block was ported from USA. Injecting the identical
+    # mapping restores execution without changing thresholds, scores or decisions.
+    if cfg.get("reference_module") == "reference.italy_v1_2" and not hasattr(reference, "DECISION_RANK"):
+        reference.DECISION_RANK = dict(_DECISION_RANK_COMPAT)
+
+    return reference
 
 def normalize_candidate(reference, market: str, c: Dict[str, Any], cfg: Dict[str, Any] | None = None) -> Dict[str, Any]:
     c=dict(c)
