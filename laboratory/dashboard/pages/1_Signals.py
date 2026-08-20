@@ -12,7 +12,17 @@ if str(SRC) not in sys.path:
 
 from lab.auth import require_dashboard_auth
 from lab.data import load_signals
-from lab.ui import apply_theme, fmt_money, fmt_rr, fmt_score, fmt_trigger, page_header
+from lab.ui import (
+    apply_theme,
+    candidate_title,
+    company_name,
+    fmt_money,
+    fmt_rr,
+    fmt_score,
+    fmt_trigger,
+    page_header,
+    trigger_class,
+)
 
 st.set_page_config(page_title="Trading Lab | Signals", layout="wide", page_icon="🎯")
 require_dashboard_auth()
@@ -75,37 +85,46 @@ active = view[active_mask].head(6)
 if active.empty:
     st.info("Nessun candidato operativo con i filtri attuali.")
 else:
-    cols = st.columns(3)
+    cols = st.columns(3, gap="small")
     for idx, (_, row) in enumerate(active.iterrows()):
         with cols[idx % 3]:
             with st.container(border=True):
-                st.markdown(f"#### {row.get('ticker', 'N/D')}")
-                st.caption(f"{row.get('status', '')} · {row.get('setup', 'N/D')}")
-                a, b, c = st.columns(3)
+                row_company = row.get("company_name") if "company_name" in row.index else None
+                st.markdown(f'<div class="candidate-title">{candidate_title(row.get("ticker"), row_company)}</div>', unsafe_allow_html=True)
+                status_text = row.get("status", "")
+                setup_text = row.get("setup", "N/D")
+                st.markdown(f'<div class="candidate-state">{status_text} · {setup_text}</div>', unsafe_allow_html=True)
+
+                a, b, c = st.columns([1, 1, 1.15], gap="small")
                 a.metric("Score", fmt_score(row.get("score_total")))
                 b.metric("R/R", fmt_rr(row.get("rr_net_tp2")))
-                c.metric("Trigger", fmt_trigger(row.get("trigger")))
+                trigger = fmt_trigger(row.get("trigger"))
+                with c:
+                    st.caption("Trigger")
+                    st.markdown(f'<span class="trigger-badge {trigger_class(trigger)}">{trigger}</span>', unsafe_allow_html=True)
+
                 st.markdown(
                     f'<div class="candidate-detail"><b>Entry / Max Buy:</b> {fmt_money(row.get("entry"))} / {fmt_money(row.get("max_buy"))}<br>'
-                    f'<b>Stop:</b> {fmt_money(row.get("stop"))} · <b>TP2:</b> {fmt_money(row.get("tp2"))}</div>',
+                    f'<b>Stop:</b> {fmt_money(row.get("stop"))} · <b>TP2:</b> {fmt_money(row.get("tp2"))}<br>'
+                    f'<span style="opacity:.76">Data quality: {row.get("data_quality", "N/D")} · Earnings: {row.get("earnings_date", "N/D")}</span></div>',
                     unsafe_allow_html=True,
                 )
-                st.caption(f"Data quality: {row.get('data_quality', 'N/D')} · Earnings: {row.get('earnings_date', 'N/D')}")
 
 left, right = st.columns(2)
 with left:
     if "score_total" in view and view["score_total"].notna().any():
         fig = px.histogram(view, x="score_total", nbins=15, title="Distribuzione score")
-        fig.update_layout(height=350, margin=dict(l=10, r=10, t=45, b=10))
+        fig.update_layout(height=330, margin=dict(l=10, r=10, t=42, b=10))
         st.plotly_chart(fig, use_container_width=True)
 with right:
     if "status" in view:
         counts = view["status"].fillna("N/D").value_counts().rename_axis("status").reset_index(name="count")
         fig = px.bar(counts, x="status", y="count", text="count", title="Segnali per stato")
-        fig.update_layout(height=350, margin=dict(l=10, r=10, t=45, b=10), xaxis_title=None, yaxis_title=None)
+        fig.update_layout(height=330, margin=dict(l=10, r=10, t=42, b=10), xaxis_title=None, yaxis_title=None)
         st.plotly_chart(fig, use_container_width=True)
 
 if "ticker" in view:
+    view["company_name_display"] = view.apply(lambda r: company_name(r.get("ticker"), r.get("company_name") if "company_name" in view.columns else None), axis=1)
     view["TradingView"] = view.apply(lambda r: f"https://www.tradingview.com/chart/?symbol={'NASDAQ' if r.get('market') == 'USA' else 'MIL'}:{r.get('ticker')}", axis=1)
 
 formatted = view.copy()
@@ -120,9 +139,17 @@ if "score_total" in formatted:
 if "trigger" in formatted:
     formatted["trigger"] = formatted["trigger"].map(fmt_trigger)
 
-preferred = ["created_at", "market", "ticker", "horizon", "status", "decision", "price", "score_total", "setup", "trigger", "entry", "buy_range_low", "buy_range_high", "max_buy", "stop", "tp1", "tp2", "rr_net_tp1", "rr_net_tp2", "earnings_date", "data_quality", "TradingView"]
+preferred = ["created_at", "market", "ticker", "company_name_display", "horizon", "status", "decision", "price", "score_total", "setup", "trigger", "entry", "buy_range_low", "buy_range_high", "max_buy", "stop", "tp1", "tp2", "rr_net_tp1", "rr_net_tp2", "earnings_date", "data_quality", "TradingView"]
 cols = [c for c in preferred if c in formatted.columns]
 with st.expander("Tabella completa", expanded=False):
-    st.dataframe(formatted[cols], use_container_width=True, hide_index=True, column_config={"TradingView": st.column_config.LinkColumn("Chart", display_text="Apri")})
+    st.dataframe(
+        formatted[cols],
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "company_name_display": st.column_config.TextColumn("Azienda"),
+            "TradingView": st.column_config.LinkColumn("Chart", display_text="Apri"),
+        },
+    )
 
 st.caption("Score e stati sono output del motore. Questa pagina li organizza, non li ricalcola.")
