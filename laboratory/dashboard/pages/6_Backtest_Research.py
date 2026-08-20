@@ -12,7 +12,7 @@ if str(SRC) not in sys.path:
 
 from lab.auth import require_dashboard_auth
 from lab.data import load_lab_backtest_results, load_lab_backtest_runs, load_lab_calibration_results, load_lab_paper_signals
-from lab.ui import STRATEGY_INFO, apply_theme, page_header, render_strategy_card, strategy_health
+from lab.ui import UI_BUILD, STRATEGY_INFO, apply_theme, page_header, render_strategy_card, strategy_health
 
 st.set_page_config(page_title="Strategy Lab", layout="wide", page_icon="🧪")
 require_dashboard_auth()
@@ -22,6 +22,7 @@ page_header(
     "Capisci quali strategie stanno funzionando, quali titoli hanno risposto meglio e quali parametri sono stati davvero testati o selezionati.",
     eyebrow="RESEARCH · BACKTEST · PAPER",
 )
+st.caption(f"UI BUILD {UI_BUILD}")
 
 try:
     runs = load_lab_backtest_runs()
@@ -97,13 +98,22 @@ if not ticker_summary.empty:
     st.plotly_chart(fig_tickers, use_container_width=True)
 
 st.markdown("### Le strategie, in parole umane")
-strategy_rows = {row["strategy"]: row for _, row in summary.iterrows()}
+strategy_rows = {}
+for record in summary[["strategy", "win_rate", "profit_factor", "return_pct", "trades"]].to_dict(orient="records"):
+    strategy_key = str(record.get("strategy"))
+    strategy_rows[strategy_key] = {
+        "win_rate": None if pd.isna(record.get("win_rate")) else float(record.get("win_rate")),
+        "profit_factor": None if pd.isna(record.get("profit_factor")) else float(record.get("profit_factor")),
+        "return_pct": None if pd.isna(record.get("return_pct")) else float(record.get("return_pct")),
+        "trades": None if pd.isna(record.get("trades")) else float(record.get("trades")),
+    }
+
 ordered = ["trend_continuation", "cross_sectional_momentum", "short_term_reversal", "defensive_low_vol_quality", "pead", "event_driven_mean_reversion", "quality_value_rerating", "macro_intermarket"]
 for i in range(0, len(ordered), 2):
     cols = st.columns(2)
     for col, strategy in zip(cols, ordered[i:i+2]):
         with col:
-            render_strategy_card(strategy, strategy_rows.get(strategy))
+            render_strategy_card(strategy, strategy_rows.get(strategy, {}))
 
 st.markdown("### Parametri testati e cosa abbiamo realmente cambiato")
 st.caption("Questa sezione separa il grid search dalla promozione. Un parametro testato non diventa automaticamente un parametro del Core.")
@@ -175,4 +185,4 @@ else:
     pcols = [c for c in ["created_at", "signal_date", "symbol", "strategy", "score", "price", "proposed_entry", "proposed_stop", "proposed_target", "status"] if c in paper]
     st.dataframe(paper[pcols], use_container_width=True, hide_index=True)
 
-st.caption("Research-only · nessuna strategia o calibrazione viene promossa automaticamente al Core · OOS / walk-forward restano obbligatori.")
+st.caption(f"Research-only · UI BUILD {UI_BUILD} · nessuna strategia o calibrazione viene promossa automaticamente al Core.")
