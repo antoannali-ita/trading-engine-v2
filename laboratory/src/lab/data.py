@@ -99,6 +99,17 @@ def load_lab_paper_events(limit: int = 2000) -> pd.DataFrame:
     return _frame(response.data)
 
 
+def load_lab_signal_outcomes(limit: int = 5000) -> pd.DataFrame:
+    response = (
+        get_supabase_client().table("lab_signal_outcomes")
+        .select("*")
+        .order("signal_date", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return _frame(response.data)
+
+
 def load_strategy_variants(limit: int = 1000) -> pd.DataFrame:
     response = get_supabase_client().table("lab_strategy_variants").select("*").order("created_at", desc=True).limit(limit).execute()
     return _frame(response.data)
