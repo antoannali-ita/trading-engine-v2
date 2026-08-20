@@ -36,12 +36,24 @@ def current_price(ticker: str, market: str):
         return None
 
 
-def tv_url(ticker: str, market: str) -> str:
-    t = str(ticker or "").upper()
+def _currency(market: str) -> str:
+    return "€" if market.upper() == "ITALY" else "$"
+
+
+def _money(value, market: str) -> str:
+    return fmt_money(value, symbol=_currency(market))
+
+
+def tv_url(row, market: str) -> str:
+    ticker = str(row.get("ticker") or "").upper()
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
     if market.upper() == "ITALY":
-        t = t.replace(".MI", "")
-        return f"https://www.tradingview.com/chart/?symbol=MIL:{t}"
-    return f"https://www.tradingview.com/chart/?symbol={t}"
+        ticker = ticker.replace(".MI", "")
+        return f"https://www.tradingview.com/chart/?symbol=MIL:{ticker}"
+    exchange = str(payload.get("exchange") or "").upper().strip()
+    if exchange:
+        return f"https://www.tradingview.com/chart/?symbol={exchange}:{ticker}"
+    return f"https://www.tradingview.com/chart/?symbol={ticker}"
 
 
 def _reason(row) -> str:
@@ -82,29 +94,21 @@ for market in ["USA", "ITALY"]:
         st.caption("No active high-conviction opportunity.")
         continue
 
-    # One active row per ticker is expected; protect the UI from accidental duplicates.
     block = block.drop_duplicates(subset=["ticker"], keep="first")
-    current_values = []
-    for _, row in block.iterrows():
-        px = current_price(str(row.get("ticker")), market)
-        current_values.append(px)
-    block["Current Price"] = current_values
-
+    block["Current Price"] = [current_price(str(row.get("ticker")), market) for _, row in block.iterrows()]
     block["Company"] = block.get("company_name", pd.Series(index=block.index)).fillna("N/D")
     block["Status"] = block.get("signal_class", pd.Series(index=block.index)).fillna("N/D")
-    block["Buy Range"] = block.apply(
-        lambda r: f"{fmt_money(r.get('buy_zone_low'))} – {fmt_money(r.get('buy_zone_high'))}", axis=1
-    )
-    block["Entry"] = block.get("entry", pd.Series(index=block.index)).map(fmt_money)
-    block["SL"] = block.get("stop", pd.Series(index=block.index)).map(fmt_money)
-    block["TP1"] = block.get("tp1", pd.Series(index=block.index)).map(fmt_money)
-    block["TP2"] = block.get("tp2", pd.Series(index=block.index)).map(fmt_money)
+    block["Buy Range"] = block.apply(lambda r: f"{_money(r.get('buy_zone_low'), market)} – {_money(r.get('buy_zone_high'), market)}", axis=1)
+    block["Entry"] = block.get("entry", pd.Series(index=block.index)).map(lambda v: _money(v, market))
+    block["SL"] = block.get("stop", pd.Series(index=block.index)).map(lambda v: _money(v, market))
+    block["TP1"] = block.get("tp1", pd.Series(index=block.index)).map(lambda v: _money(v, market))
+    block["TP2"] = block.get("tp2", pd.Series(index=block.index)).map(lambda v: _money(v, market))
     block["Net R/R"] = block.get("net_rr_tp2", pd.Series(index=block.index)).map(fmt_rr)
-    block["Chart"] = block.get("ticker", pd.Series(index=block.index)).map(lambda t: tv_url(t, market))
+    block["Chart"] = block.apply(lambda r: tv_url(r, market), axis=1)
 
     table = block[["ticker", "Company", "Status", "Current Price", "Buy Range", "Entry", "SL", "TP1", "TP2", "Net R/R", "Chart"]].copy()
     table = table.rename(columns={"ticker": "Ticker"})
-    table["Current Price"] = table["Current Price"].map(fmt_money)
+    table["Current Price"] = table["Current Price"].map(lambda v: _money(v, market))
 
     st.dataframe(
         table,
