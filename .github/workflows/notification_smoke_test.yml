@@ -1,0 +1,54 @@
+name: Notification Smoke Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - strategy-lab-v1
+    paths:
+      - .github/workflows/notification_smoke_test.yml
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Test email and WhatsApp using CORE clients
+        env:
+          GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
+          GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
+          GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
+          WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+          SMTP_HOST: smtp.gmail.com
+          SMTP_PORT: '587'
+        run: |
+          python - <<'PY'
+          from notifications.email_client import send_email
+          from notifications.whatsapp_client import send_whatsapp
+
+          subject = '[TEST][CORE] Trading Engine v2 - Email OK?'
+          body = '''
+          <h2>Test notifiche Trading Engine v2</h2>
+          <p>Questa è una prova manuale del canale EMAIL eseguita da GitHub Actions.</p>
+          <p>Se ricevi questo messaggio, i Secret Gmail e il client SMTP del CORE funzionano.</p>
+          '''
+          email_ok = send_email(subject, body, is_html=True)
+          wa_ok = send_whatsapp('TEST Trading Engine v2: canale WhatsApp OK? Questa è una prova manuale da GitHub Actions.')
+
+          print(f'EMAIL_OK={email_ok}')
+          print(f'WHATSAPP_OK={wa_ok}')
+
+          if not email_ok or not wa_ok:
+              raise SystemExit('Notification smoke test failed')
+          PY
