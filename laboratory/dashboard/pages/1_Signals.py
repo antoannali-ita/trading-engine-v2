@@ -33,7 +33,10 @@ st.markdown(
     .core-kpi-label {font-size:.65rem; opacity:.65; margin-bottom:3px;}
     .core-kpi-value {font-size:1rem; font-weight:760; line-height:1.18;}
     .core-trigger {font-size:.70rem; font-weight:780; line-height:1.28; overflow-wrap:anywhere;}
-    .core-market-strip {margin:.12rem 0 .48rem 0; padding:6px 8px; border-radius:8px; background:rgba(59,130,246,.06); font-size:.74rem; line-height:1.35;}
+    .core-market-strip {margin:.12rem 0 .48rem 0; padding:6px 8px; border-radius:8px; background:rgba(59,130,246,.06); font-size:.76rem; line-height:1.35;}
+    .core-day-pos {font-weight:800; color:inherit;}
+    .core-day-neg {font-weight:800; color:#dc2626;}
+    .core-day-flat {font-weight:800; opacity:.72;}
     .core-levels {display:grid; grid-template-columns:1fr 1fr; gap:5px 12px; font-size:.80rem; line-height:1.38; margin-top:.18rem;}
     .core-levels b {font-weight:730;}
     .core-meta {grid-column:1 / -1; padding-top:3px; margin-top:2px; border-top:1px solid rgba(128,128,128,.12); font-size:.76rem; opacity:.82;}
@@ -53,18 +56,27 @@ def intraday_snapshot(ticker: str, market: str):
     try:
         hist = yf.Ticker(symbol).history(period="1d", interval="5m", auto_adjust=True)
         if hist.empty or hist["Close"].dropna().empty:
-            return None, None, None
+            return None, None, None, None
         current = float(hist["Close"].dropna().iloc[-1])
         day_low = float(hist["Low"].dropna().min()) if "Low" in hist and not hist["Low"].dropna().empty else None
         day_high = float(hist["High"].dropna().max()) if "High" in hist and not hist["High"].dropna().empty else None
-        return current, day_low, day_high
+        session_open = float(hist["Open"].dropna().iloc[0]) if "Open" in hist and not hist["Open"].dropna().empty else None
+        day_pct = ((current / session_open) - 1.0) * 100.0 if session_open not in (None, 0) else None
+        return current, day_low, day_high, day_pct
     except Exception:
-        return None, None, None
+        return None, None, None, None
 
 
 def _money(value, market):
     symbol = "€" if str(market or "").upper() in {"ITALY", "ITA", "MIL", "MI"} else "$"
     return fmt_money(value, symbol=symbol)
+
+
+def _day_pct_html(value) -> str:
+    if value is None or pd.isna(value):
+        return '<span class="core-day-flat">N/D</span>'
+    cls = "core-day-neg" if float(value) < 0 else "core-day-pos" if float(value) > 0 else "core-day-flat"
+    return f'<span class="{cls}">{float(value):+.2f}%</span>'
 
 
 try:
@@ -126,7 +138,7 @@ else:
                 row_company = row.get("company_name") if "company_name" in row.index else None
                 ticker = row.get("ticker")
                 market_value = row.get("market", "USA")
-                current, day_low, day_high = intraday_snapshot(str(ticker), str(market_value))
+                current, day_low, day_high, day_pct = intraday_snapshot(str(ticker), str(market_value))
 
                 st.markdown(f'<div class="candidate-title">{candidate_title(ticker, row_company)}</div>', unsafe_allow_html=True)
                 status_text = fmt_status(row.get("status", ""))
@@ -145,8 +157,9 @@ else:
 
                 st.markdown(
                     f'<div class="core-market-strip"><b>Current:</b> {_money(current, market_value)} &nbsp;·&nbsp; '
-                    f'<b>Day Low:</b> {_money(day_low, market_value)} &nbsp;·&nbsp; '
-                    f'<b>Day High:</b> {_money(day_high, market_value)}</div>',
+                    f'<b>Min:</b> {_money(day_low, market_value)} &nbsp;·&nbsp; '
+                    f'<b>Max:</b> {_money(day_high, market_value)} &nbsp;·&nbsp; '
+                    f'<b>Oggi:</b> {_day_pct_html(day_pct)}</div>',
                     unsafe_allow_html=True,
                 )
 
@@ -195,4 +208,4 @@ with st.expander("Full Table", expanded=False):
     localized = localize_table(formatted[cols])
     st.dataframe(localized, use_container_width=True, hide_index=True, column_config={"Company": st.column_config.TextColumn("Company"), "TradingView": st.column_config.LinkColumn("Chart", display_text="Open")})
 
-st.caption("Scores and statuses are engine outputs. Intraday values are cached market-data context and do not change the Core decision.")
+st.caption("Scores and statuses are engine outputs. Intraday Current/Min/Max/% Oggi are cached market-data context and do not change the Core decision.")
