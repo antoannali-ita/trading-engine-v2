@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from supabase import create_client
+
+
+WATCH_STATES = {
+    "WATCH", "WAIT", "PRE-BUY", "PRE_BUY", "PRE_BUY_HIGH",
+    "BUY LIMIT", "BUY_LIMIT", "BUY NOW", "BUY_NOW", "SHADOW_BUY",
+}
 
 
 def _client():
@@ -39,6 +45,130 @@ def _pick(c: dict[str, Any], *keys: str):
         if key in c and c.get(key) is not None:
             return c.get(key)
     return None
+
+
+def _state(*values: Any) -> str:
+    for value in values:
+        if value is not None:
+            return str(value).strip().upper().replace("_", " ")
+    return "N/D"
+
+
+def _watch_alert(c: dict[str, Any]) -> tuple[str, float | None]:
+    price = _num(_pick(c, "price", "last", "close"))
+    entry = _num(_pick(c, "entry", "ideal_entry", "entry_price"))
+    max_buy = _num(_pick(c, "max_buy", "max_entry"))
+    trigger = _state(_pick(c, "trigger", "trigger_state"))
+
+    if entry is not None:
+        if price is not None and price <= entry:
+            return "ENTRY_REACHED", entry
+        return "ENTRY_APPROACH", entry
+    if max_buy is not None:
+        return "MAX_BUY_MONITOR", max_buy
+    if trigger not in {"N/D", ""}:
+        return "TRIGGER_MONITOR", price
+    return "PRICE_MONITOR", price
+
+
+def _persist_watchlist(client, rows: list[dict[str, Any]], market: str) -> int:
+    # Watchlist is a current-state projection. Historical signal detail remains in signals.
+    try:
+        client.table("watchlist").update({"active": False}).eq("market", market).eq("active", True).execute()
+    except Exception as exc:
+        print(f"WATCHLIST deactivate warning: {exc}")
+
+    watch_rows: list[dict[str, Any]] = []
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        state = _state(row.get("status"), row.get("decision"))
+        decision = _state(row.get("decision"))
+        if state not in WATCH_STATES and decision not in WATCH_STATES:
+            continue
+        raw = row.get("raw_data") if isinstance(row.get("raw_data"), dict) else {}
+        alert_type, alert_price = _watch_alert({**raw, **row})
+        reason = row.get("reason") or raw.get("reason") or raw.get("why") or raw.get("rationale") or ""
+        watch_rows.append({
+            "ticker": row["ticker"],
+            "market": market,
+            "status": row.get("status") or row.get("decision") or "WATCH",
+            "alert_type": alert_type,
+            "alert_price": alert_price,
+            "reason": str(reason)[:4000],
+            "source_signal_id": row["signal_id"],
+            "created_at": now.isoformat(),
+            "expires_at": (now + timedelta(days=30)).isoformat(),
+            "active": True,
+        })
+    if watch_rows:
+        client.table("watchlist").insert(watch_rows).execute()
+    return len(watch_rows)
+
+
+def _portfolio_positions_from_env() -> list[dict[str, Any]]:
+    raw = os.getenv("PORTFOLIO_POSITIONS_JSON", "").strip()
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"PORTFOLIO sync warning: invalid JSON ({exc})")
+        return []
+    if isinstance(data, dict):
+        data = data.get("positions", data.get("portfolio", []))
+    return data if isinstance(data, list) else []
+
+
+def _persist_portfolio(client) -> int:
+    """Sync only explicitly supplied real portfolio positions.
+
+    Never creates real positions from engine signals. Missing tickers are not auto-closed.
+    """
+    positions = _portfolio_positions_from_env()
+    synced = 0
+    for p in positions:
+        if not isinstance(p, dict):
+            continue
+        ticker = str(_pick(p, "ticker", "symbol") or "").upper().strip()
+        if not ticker:
+            continue
+        market = str(_pick(p, "market") or ("ITALY" if ticker.endswith(".MI") else "USA")).upper()
+        qty = _int(_pick(p, "qty", "quantity", "shares"))
+        entry = _num(_pick(p, "entry_price", "avg_price", "average_price", "pmc", "price"))
+        if qty is None or qty <= 0 or entry is None or entry <= 0:
+            print(f"PORTFOLIO sync skipped {ticker}: qty/entry missing")
+            continue
+
+        payload = {
+            "ticker": ticker,
+            "market": market,
+            "broker": str(_pick(p, "broker") or "Fineco"),
+            "order_type": "PORTFOLIO_SYNC",
+            "qty": qty,
+            "entry_price": entry,
+            "stop_initial": _num(_pick(p, "stop_initial", "stop")),
+            "stop_current": _num(_pick(p, "stop_current", "stop")),
+            "tp1": _num(_pick(p, "tp1", "target1")),
+            "tp2": _num(_pick(p, "tp2", "target2")),
+            "commission_entry": _num(_pick(p, "commission_entry")),
+            "trade_status": "OPEN",
+        }
+        existing = (
+            client.table("trades")
+            .select("id")
+            .eq("ticker", ticker)
+            .eq("market", market)
+            .eq("trade_status", "OPEN")
+            .limit(1)
+            .execute()
+        )
+        if existing.data:
+            client.table("trades").update(payload).eq("id", existing.data[0]["id"]).execute()
+        else:
+            payload["entry_date"] = _pick(p, "entry_date", "date") or datetime.now(timezone.utc).isoformat()
+            client.table("trades").insert(payload).execute()
+        synced += 1
+    return synced
 
 
 def persist_scan(result: dict[str, Any], cfg: dict[str, Any]) -> None:
@@ -118,4 +248,10 @@ def persist_scan(result: dict[str, Any], cfg: dict[str, Any]) -> None:
 
     if rows:
         client.table("signals").upsert(rows, on_conflict="signal_id").execute()
-    print(f"SUPABASE persisted run={run_id} signals={len(rows)}")
+
+    watch_count = _persist_watchlist(client, rows, market)
+    portfolio_count = _persist_portfolio(client)
+    print(
+        f"SUPABASE persisted run={run_id} signals={len(rows)} "
+        f"watchlist={watch_count} portfolio_open_synced={portfolio_count}"
+    )
