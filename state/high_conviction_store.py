@@ -84,10 +84,48 @@ def classify_high_conviction(market: str, c: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _payload(run_id: str, market: str, c: Dict[str, Any], signal_class: str) -> Dict[str, Any]:
+def _buy_requirements(market: str, c: Dict[str, Any], reference=None, regime: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    regime = regime if isinstance(regime, dict) else {}
+    score_min = _num(getattr(reference, "MIN_SCORE_BUY", None)) if reference is not None else None
+    rr_tp1_min = _num(getattr(reference, "MIN_NET_RR_TP1", None)) if reference is not None else None
+    rr_tp2_min = _num(regime.get("min_net_rr"))
+    if rr_tp2_min is None and reference is not None:
+        rr_tp2_min = _num(getattr(reference, "MIN_NET_RR_NORMAL", None))
+
+    return {
+        "market": market.upper(),
+        "market_regime": _text(regime.get("regime") or regime.get("state")),
+        "score_min": score_min,
+        "rr_tp1_min": rr_tp1_min,
+        "rr_tp2_min": rr_tp2_min,
+        "trigger_required": "CONFIRMED",
+        "max_buy": _num(_pick(c, "max_buy", "max_entry")),
+        "prebuy_high_min": 8.0 if market.strip().lower() == "usa" else None,
+        "data_quality_required": "NOT_RED",
+        "structure_required": "PASS",
+        "sizing_required": "PASS",
+        "source": "CORE_REFERENCE_AND_REGIME",
+    }
+
+
+def _payload(
+    run_id: str,
+    market: str,
+    c: Dict[str, Any],
+    signal_class: str,
+    *,
+    reference=None,
+    regime: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     failed = _pick(c, "failed_gates", "prebuy_missing") or []
     if not isinstance(failed, list):
         failed = [str(failed)]
+
+    raw_payload = _json_safe(c)
+    if not isinstance(raw_payload, dict):
+        raw_payload = {"raw": raw_payload}
+    raw_payload["_buy_requirements"] = _buy_requirements(market, c, reference=reference, regime=regime)
+
     return {
         "run_id": run_id,
         "market": market.upper(),
@@ -121,11 +159,18 @@ def _payload(run_id: str, market: str, c: Dict[str, Any], signal_class: str) -> 
         "coverage_pct": _num(_pick(c, "data_coverage_pct", "coverage_pct")),
         "change_state": _text(c.get("change_state")),
         "active": True,
-        "payload": _json_safe(c),
+        "payload": raw_payload,
     }
 
 
-def persist_high_conviction(run_id: Optional[str], market: str, selected: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+def persist_high_conviction(
+    run_id: Optional[str],
+    market: str,
+    selected: Iterable[Dict[str, Any]],
+    *,
+    reference=None,
+    regime: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     url = os.getenv("SUPABASE_URL", "").strip()
     key = os.getenv("SUPABASE_SECRET_KEY", "").strip()
     if not url or not key:
@@ -141,7 +186,7 @@ def persist_high_conviction(run_id: Optional[str], market: str, selected: Iterab
     for c in selected:
         signal_class = classify_high_conviction(market, c)
         if signal_class:
-            rows.append(_payload(rid, market, c, signal_class))
+            rows.append(_payload(rid, market, c, signal_class, reference=reference, regime=regime))
 
     try:
         db = create_client(url, key)
