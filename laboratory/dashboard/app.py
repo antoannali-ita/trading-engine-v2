@@ -12,6 +12,7 @@ if str(SRC) not in sys.path:
 
 from lab.auth import require_dashboard_auth
 from lab.db import get_supabase_client
+from lab.settings import CAPITAL_TOTAL_BASE, MAX_NEW_BUYS, MAX_POSITION_USD, PREFERRED_ORDER_TYPE, USA_COMMISSION_USD
 from lab.ui import apply_theme, page_header
 
 st.set_page_config(page_title="Trading Lab", layout="wide", page_icon="📈")
@@ -19,7 +20,7 @@ require_dashboard_auth()
 apply_theme()
 page_header(
     "Control Room",
-    "Vista rapida su segnali, stato del motore e priorità operative. Qui devi capire in pochi secondi se c'è qualcosa che merita attenzione.",
+    "Vista rapida su segnali, capitale, stato del motore e priorità operative. In pochi secondi devi capire cosa merita attenzione e quanto puoi impegnare.",
 )
 
 try:
@@ -41,18 +42,18 @@ if not signals.empty:
     action_mask = decision_series.isin(interesting) | status_series.isin(interesting)
     action_count = int(action_mask.sum())
     ticker_count = int(signals["ticker"].nunique()) if "ticker" in signals else 0
-    avg_score = pd.to_numeric(signals.get("score_total"), errors="coerce").mean() if "score_total" in signals else float("nan")
     dq_bad = int(signals.get("data_quality", pd.Series(index=signals.index, dtype=object)).fillna("").astype(str).str.upper().isin(["FAIL", "ERROR", "DATA REVIEW", "LOW"]).sum())
 else:
     action_count = ticker_count = dq_bad = 0
-    avg_score = float("nan")
 
 c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Run disponibili", len(runs), help="Numero di run Core registrati nel database.")
-c2.metric("Segnali", len(signals), help="Segnali recenti caricati da Supabase.")
-c3.metric("Ticker unici", ticker_count)
-c4.metric("Candidati operativi", action_count, help="BUY / BUY LIMIT / PRE-BUY / SHADOW_BUY.")
+c1.metric("Capitale configurato", f"{CAPITAL_TOTAL_BASE:,.0f}", help="Capitale totale base del progetto. La dashboard non presume un cambio EUR/USD.")
+c2.metric("Max posizione", f"${MAX_POSITION_USD:,.0f}", help="Tetto massimo per una singola nuova posizione USA.")
+c3.metric("Candidati operativi", action_count, help="BUY / BUY LIMIT / PRE-BUY / SHADOW_BUY.")
+c4.metric("Ticker monitorati", ticker_count)
 c5.metric("Data warning", dq_bad, help="Segnali con qualità dati bassa o in revisione.")
+
+st.caption(f"Policy: max {MAX_NEW_BUYS} nuovi BUY · preferenza {PREFERRED_ORDER_TYPE} · commissione USA ${USA_COMMISSION_USD:.0f} per operazione.")
 
 st.markdown("### Priorità operative")
 if signals.empty:
