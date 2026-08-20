@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 
-UI_BUILD = "2026.08.20-2115"
+UI_BUILD = "2026.08.20-2246"
 COPYRIGHT_TEXT = "Questo sito è stato prodotto da Antonio Larocca · Tutti i diritti riservati."
 
 COMPANY_NAMES = {
@@ -219,88 +219,83 @@ def fmt_score(value: Any) -> str:
 
 
 def fmt_rr(value: Any) -> str:
-    return fmt_num(value, 2)
+    number = _number(value)
+    return "N/D" if number is None else f"{number:.2f}"
 
 
 def fmt_qty(value: Any) -> str:
     number = _number(value)
-    return "N/D" if number is None else f"{int(number):,}"
+    return "N/D" if number is None else f"{int(number)}"
 
 
 def fmt_trigger(value: Any) -> str:
-    scalar = _scalar(value)
-    text = "N/D" if scalar is None else str(scalar).strip().upper().replace("_", " ")
-    mapping = {
-        "WAITING": "ATTENDI",
-        "WAIT": "ATTENDI",
-        "CONFIRMED": "CONFERMATO",
-        "BUY ZONE": "BUY ZONE",
-        "INVALID": "INVALIDO",
-    }
+    text = "N/D" if value is None else str(value).strip().upper().replace("_", " ")
+    mapping = {"CONFIRMED": "CONFERMATO", "WAITING": "ATTENDI", "BUY ZONE": "BUY ZONE", "ENTRY REACHED": "ENTRY RAGGIUNTA"}
     return mapping.get(text, text)
 
 
-def trigger_class(value: Any) -> str:
-    trigger = fmt_trigger(value)
-    if trigger == "CONFERMATO":
+def trigger_class(trigger: str) -> str:
+    t = str(trigger).upper()
+    if "CONFERMATO" in t or "CONFIRMED" in t:
         return "trigger-confirmed"
-    if trigger == "ATTENDI":
-        return "trigger-wait"
-    if trigger == "BUY ZONE":
+    if "BUY" in t or "ENTRY" in t:
         return "trigger-buy"
-    return ""
+    return "trigger-wait"
 
 
-def company_name(ticker: Any, row_company_name: Any = None) -> str:
-    supplied = _scalar(row_company_name)
-    if supplied is not None and str(supplied).strip() and str(supplied).strip().upper() not in {"NONE", "N/D", "NAN"}:
-        return str(supplied).strip()
-    key = str(_scalar(ticker) or "").strip().upper()
-    return COMPANY_NAMES.get(key, "")
+def company_name(ticker: Any, supplied: Any = None) -> str:
+    if supplied is not None:
+        text = str(supplied).strip()
+        if text and text.lower() not in {"nan", "none", "n/d"}:
+            return text
+    key = "" if ticker is None else str(ticker).strip().upper()
+    return COMPANY_NAMES.get(key, "Nome società N/D")
 
 
-def candidate_title(ticker: Any, row_company_name: Any = None) -> str:
-    tick = str(_scalar(ticker) or "N/D").strip().upper()
-    name = company_name(tick, row_company_name)
-    if not name:
-        return html.escape(tick)
-    return f'{html.escape(tick)} <span class="company-name">— {html.escape(name)}</span>'
+def candidate_title(ticker: Any, supplied_company: Any = None) -> str:
+    t = "N/D" if ticker is None else str(ticker).strip().upper()
+    company = company_name(t, supplied_company)
+    return f'{html.escape(t)} <span class="company-name">{html.escape(company)}</span>'
 
 
-def strategy_health(profit_factor: Any, trades: Any, return_pct: Any) -> tuple[str, str]:
-    pf = _number(profit_factor)
-    n = _number(trades)
-    ret = _number(return_pct)
-    if pf is None or n is None or ret is None:
-        return "N/D", "status-na"
-    if n >= 80 and pf >= 1.5 and ret > 0:
-        return "Robusta", "status-good"
-    if n >= 35 and pf >= 1.15 and ret > 0:
-        return "Da validare", "status-mid"
-    if n >= 20 and (pf < 1 or ret < 0):
-        return "Debole", "status-bad"
-    return "Campione piccolo", "status-na"
+def strategy_health(row: pd.Series) -> tuple[str, str]:
+    trades = _number(row.get("trades")) or 0
+    pf = _number(row.get("profit_factor"))
+    ret = _number(row.get("total_return_pct"))
+    if trades < 5:
+        return "DATI LIMITATI", "status-na"
+    if pf is not None and pf >= 1.5 and ret is not None and ret > 0:
+        return "ROBUSTA V1", "status-good"
+    if pf is not None and pf >= 1.0 and ret is not None and ret >= 0:
+        return "DA VALIDARE", "status-mid"
+    return "DEBOLE", "status-bad"
 
 
-def render_strategy_card(strategy: str, row: dict[str, Any] | None = None) -> None:
-    meta = STRATEGY_INFO.get(strategy, {"label": strategy, "summary": "Descrizione non disponibile.", "signals": [], "best_for": "N/D", "weak_when": "N/D"})
-    data = row if isinstance(row, dict) else {}
-    pf = _number(data.get("profit_factor"))
-    trades = _number(data.get("trades"))
-    ret = _number(data.get("return_pct"))
-    wr = _number(data.get("win_rate"))
-    health, klass = strategy_health(pf, trades, ret)
-    signals = list(meta.get("signals", []))
-    pills = "".join(f'<span class="pill">{html.escape(str(x))}</span>' for x in signals[:5])
-    label = html.escape(str(meta.get("label", strategy)))
-    summary = html.escape(str(meta.get("summary", "N/D")))
-    card_html = ('<div class="strategy-card">' f'<div class="strategy-name">{label} <span title="{summary}">ⓘ</span></div>' f'<div class="strategy-meta"><span class="pill {klass}">{health}</span> PF {fmt_num(pf)} · Return {fmt_pct(ret)} · Win {fmt_pct(wr)} · N {fmt_num(trades, 0)}</div>' f'<div style="font-size:.86rem; opacity:.82; margin-bottom:10px;">{summary}</div>' f'<div>{pills}</div></div>')
-    st.markdown(card_html, unsafe_allow_html=True)
-    with st.expander("COME FUNZIONA E QUANDO USARLA"):
-        st.markdown(f"**Funziona meglio:** {meta.get('best_for', 'N/D')}")
-        st.markdown(f"**Tende a soffrire:** {meta.get('weak_when', 'N/D')}")
-        st.markdown("**Input principali:** " + ", ".join(str(x) for x in signals))
+def render_strategy_card(name: str, results: pd.DataFrame, paper: pd.DataFrame) -> None:
+    info = STRATEGY_INFO.get(name, {"label": name, "summary": "N/D", "signals": [], "best_for": "N/D", "weak_when": "N/D"})
+    r = results[results["strategy"] == name].copy() if not results.empty and "strategy" in results else pd.DataFrame()
+    p = paper[paper["strategy"] == name].copy() if not paper.empty and "strategy" in paper else pd.DataFrame()
 
+    if r.empty:
+        status, cls = "IN ATTESA", "status-na"
+        avg_pf, avg_ret, trades = None, None, 0
+    else:
+        trades = int(pd.to_numeric(r.get("trades"), errors="coerce").fillna(0).sum())
+        avg_pf = pd.to_numeric(r.get("profit_factor"), errors="coerce").replace([float("inf"), float("-inf")], pd.NA).dropna().mean()
+        avg_ret = pd.to_numeric(r.get("total_return_pct"), errors="coerce").dropna().mean()
+        summary = pd.Series({"trades": trades, "profit_factor": avg_pf, "total_return_pct": avg_ret})
+        status, cls = strategy_health(summary)
 
-def info_help(label: str, text: str) -> None:
-    st.markdown(f'**{html.escape(str(label))}** <span title="{html.escape(str(text))}">ⓘ</span>', unsafe_allow_html=True)
+    paper_count = len(p)
+    latest_state = p.iloc[0].get("status") if not p.empty else "N/D"
+    signal_text = " · ".join(info.get("signals", [])[:4])
+
+    st.markdown(
+        f'<div class="strategy-card"><div class="strategy-name">{html.escape(info["label"])}</div>'
+        f'<div class="strategy-meta"><span class="pill {cls}">{status}</span><span class="pill">Paper {paper_count}</span><span class="pill">{html.escape(str(latest_state))}</span></div>'
+        f'<div style="font-size:.84rem;line-height:1.44;opacity:.88">{html.escape(info["summary"])}</div>'
+        f'<div style="font-size:.72rem;line-height:1.4;opacity:.64;margin-top:8px">{html.escape(signal_text)}</div>'
+        f'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px;font-size:.72rem"><div><b>Trade</b><br>{trades}</div><div><b>PF medio</b><br>{fmt_num(avg_pf,2)}</div><div><b>Return medio</b><br>{fmt_pct(avg_ret)}</div></div>'
+        f'<div style="font-size:.71rem;line-height:1.36;opacity:.66;margin-top:9px"><b>Funziona meglio:</b> {html.escape(info["best_for"])}<br><b>Debole quando:</b> {html.escape(info["weak_when"])}</div></div>',
+        unsafe_allow_html=True,
+    )
