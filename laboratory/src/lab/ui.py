@@ -6,7 +6,8 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-UI_BUILD = "2026.08.20-2358"
+
+UI_BUILD = "2026.08.21-0035"
 COPYRIGHT_TEXT = "Questo sito è stato prodotto da Antonio Larocca · Tutti i diritti riservati."
 
 COMPANY_NAMES = {
@@ -24,37 +25,74 @@ COMPANY_NAMES = {
 }
 
 STRATEGY_INFO = {
-    "trend_continuation": {"label": "Trend Continuation", "summary": "Cerca titoli già in trend positivo e prova a entrare su continuazione o pullback ordinati, evitando prezzi troppo estesi.", "signals": ["Price vs SMA50/SMA200", "Pullback to SMA50", "ATR", "60d Momentum", "Relative Volume", "20d Breakout"], "best_for": "Trend direzionali puliti e leadership persistente.", "weak_when": "Mercato laterale, falsi breakout, inversioni rapide."},
-    "cross_sectional_momentum": {"label": "Cross-Sectional Momentum", "summary": "Premia i titoli più forti rispetto all'universo. La versione v2 dovrà usare una vera classifica cross-sectional sullo stesso giorno.", "signals": ["20d Return", "60d Return", "120d Return", "Cross-Sectional Rank"], "best_for": "Regimi risk-on con leadership stabile.", "weak_when": "Rotazioni violente e mean reversion improvvisa."},
-    "short_term_reversal": {"label": "Short-Term Reversal", "summary": "Cerca eccessi ribassisti di breve periodo dentro una struttura di fondo ancora accettabile, puntando a un rimbalzo controllato.", "signals": ["RSI14", "Distance from SMA20", "ATR", "Long-Term Trend", "Daily Stabilization"], "best_for": "Sell-off tecnici non accompagnati da rottura strutturale.", "weak_when": "Crolli fondamentali, gap negativi, downtrend persistenti."},
-    "defensive_low_vol_quality": {"label": "Defensive Low Vol", "summary": "Favorisce titoli meno volatili, sopra la media lunga e con momentum ancora positivo.", "signals": ["20d Volatility", "SMA200", "ATR%", "60d Momentum"], "best_for": "Fasi difensive o mercati incerti con preferenza per stabilità.", "weak_when": "Bull market molto aggressivi dominati da beta elevato."},
-    "pead": {"label": "PEAD", "summary": "Post-Earnings Announcement Drift con dati point-in-time.", "signals": ["EPS Surprise", "Revenue Surprise", "Analyst Revisions", "Event Age"], "best_for": "Earnings con sorpresa credibile e revisioni coerenti.", "weak_when": "Dati evento incompleti."},
-    "event_driven_mean_reversion": {"label": "Event Mean Reversion", "summary": "Cerca eccessi di prezzo dopo eventi non binari.", "signals": ["Event Return", "Volume Z-Score", "Day-1 Reaction"], "best_for": "Shock temporanei.", "weak_when": "Eventi binari o strutturali."},
-    "quality_value_rerating": {"label": "Quality Value Rerating", "summary": "Combina qualità, crescita, leva e valutazione.", "signals": ["FCF Yield", "ROIC", "Revenue Growth", "EPS Growth", "Net Debt/EBITDA"], "best_for": "Rerating di società solide.", "weak_when": "Value trap."},
-    "macro_intermarket": {"label": "Macro Intermarket", "summary": "Integra trend e impulsi macro.", "signals": ["Trend Score", "Rates Impulse", "Credit Impulse", "Commodity Impulse", "USD Impulse"], "best_for": "Regimi macro persistenti.", "weak_when": "Transizioni rapide."},
+    "trend_continuation": {
+        "label": "Trend Continuation",
+        "summary": "Cerca titoli già in trend positivo e prova a entrare su continuazione o pullback ordinati, evitando prezzi troppo estesi.",
+        "signals": ["Price vs SMA50/SMA200", "Pullback to SMA50", "ATR", "60d Momentum", "Relative Volume", "20d Breakout"],
+        "best_for": "Trend direzionali puliti e leadership persistente.",
+        "weak_when": "Mercato laterale, falsi breakout, inversioni rapide.",
+    },
+    "cross_sectional_momentum": {
+        "label": "Cross-Sectional Momentum",
+        "summary": "Premia i titoli più forti rispetto all'universo. La versione v2 dovrà usare una vera classifica cross-sectional sullo stesso giorno.",
+        "signals": ["20d Return", "60d Return", "120d Return", "Cross-Sectional Rank"],
+        "best_for": "Regimi risk-on con leadership stabile.",
+        "weak_when": "Rotazioni violente e mean reversion improvvisa.",
+    },
+    "short_term_reversal": {
+        "label": "Short-Term Reversal",
+        "summary": "Cerca eccessi ribassisti di breve periodo dentro una struttura di fondo ancora accettabile, puntando a un rimbalzo controllato.",
+        "signals": ["RSI14", "Distance from SMA20", "ATR", "Long-Term Trend", "Daily Stabilization"],
+        "best_for": "Sell-off tecnici non accompagnati da rottura strutturale.",
+        "weak_when": "Crolli fondamentali, gap negativi, downtrend persistenti.",
+    },
+    "defensive_low_vol_quality": {
+        "label": "Defensive Low Vol",
+        "summary": "Favorisce titoli meno volatili, sopra la media lunga e con momentum ancora positivo. Il quality overlay completo arriverà in una fase successiva.",
+        "signals": ["20d Volatility", "SMA200", "ATR%", "60d Momentum"],
+        "best_for": "Fasi difensive o mercati incerti con preferenza per stabilità.",
+        "weak_when": "Bull market molto aggressivi dominati da beta elevato.",
+    },
+    "pead": {"label": "PEAD", "summary": "Post-Earnings Announcement Drift: cerca la continuazione dopo sorprese trimestrali usando dati point-in-time.", "signals": ["EPS Surprise", "Revenue Surprise", "Analyst Revisions", "Event Age", "Post-Earnings Reaction"], "best_for": "Earnings con sorpresa credibile e revisioni coerenti.", "weak_when": "Dati evento incompleti o reazioni già completamente assorbite."},
+    "event_driven_mean_reversion": {"label": "Event Mean Reversion", "summary": "Cerca eccessi di prezzo dopo eventi non binari, quando la reazione appare sproporzionata rispetto al comportamento normale del titolo.", "signals": ["Event Return", "Volume Z-Score", "Day-1 Reaction", "Binary Event Filter"], "best_for": "Shock temporanei e non strutturali.", "weak_when": "Eventi binari o cambiamenti permanenti del business."},
+    "quality_value_rerating": {"label": "Quality Value Rerating", "summary": "Combina qualità economica, crescita, leva e sconto di valutazione per cercare rerating di società solide ma non care.", "signals": ["FCF Yield", "ROIC", "Revenue Growth", "EPS Growth", "Net Debt/EBITDA", "Valuation Discount"], "best_for": "Normalizzazione dei multipli e miglioramento degli utili.", "weak_when": "Value trap e deterioramento strutturale del business."},
+    "macro_intermarket": {"label": "Macro Intermarket", "summary": "Integra trend e impulsi macro per capire quali asset o settori sono coerenti con tassi, credito, commodity e dollaro.", "signals": ["Trend Score", "Rates Impulse", "Credit Impulse", "Commodity Impulse", "USD Impulse", "Macro Fit"], "best_for": "Regimi macro riconoscibili e persistenti.", "weak_when": "Transizioni di regime rapide o segnali macro conflittuali."},
 }
 
 STATUS_LABELS = {
-    "PAPER_OPEN": "PAPER OPEN", "OPEN": "OPEN", "TP1_HIT": "TP1 HIT", "PRE_BUY": "PRE-BUY", "PRE_BUY_HIGH": "PRE-BUY HIGH",
-    "NEAR_SETUP": "NEAR SETUP", "WATCH": "WATCH", "CONFIRMED": "CONFIRMED", "WAITING": "WAITING", "BLOCKED": "BLOCKED",
-    "BLOCKED_DATA": "BLOCKED DATA", "REJECTED": "REJECTED", "PROMOTABLE": "PROMOTABLE", "CANDIDATE": "CANDIDATE",
-    "BENCHMARK": "BENCHMARK", "SHADOW_BUY": "SHADOW BUY", "BUY NOW": "BUY NOW", "BUY LIMIT": "BUY LIMIT", "AVOID": "AVOID",
+    "PAPER_OPEN": "PAPER OPEN", "OPEN": "OPEN", "TP1_HIT": "TP1 HIT", "PRE_BUY": "PRE-BUY",
+    "PRE_BUY_HIGH": "PRE-BUY HIGH", "NEAR_SETUP": "NEAR SETUP", "WATCH": "WATCH", "CONFIRMED": "CONFIRMED",
+    "WAITING": "WAITING", "BLOCKED": "BLOCKED", "BLOCKED_DATA": "BLOCKED DATA", "REJECTED": "REJECTED",
+    "PROMOTABLE": "PROMOTABLE", "CANDIDATE": "CANDIDATE", "BENCHMARK": "BENCHMARK", "SHADOW_BUY": "SHADOW BUY",
+    "BUY NOW": "BUY NOW", "BUY LIMIT": "BUY LIMIT", "AVOID": "AVOID",
 }
+
 REGIME_LABELS = {"BULL_QUIET": "BULL QUIET", "BULL_VOLATILE": "BULL VOLATILE", "RANGE_NEUTRAL": "RANGE / NEUTRAL", "NEUTRAL": "NEUTRAL", "BEAR_HIGH_VOL": "BEAR / HIGH VOL", "BEAR": "BEAR"}
 QUALITY_LABELS = {"GREEN": "GREEN", "YELLOW": "YELLOW", "RED": "RED"}
+
 COLUMN_LABELS = {
-    "created_at": "Created At", "last_seen_at": "Last Seen", "last_checked_date": "Last Checked", "signal_date": "Signal Date", "source_signal_date": "Source Signal Date", "opened_at": "Opened At",
-    "symbol": "Ticker", "ticker": "Ticker", "azienda": "Company", "company_name_display": "Company", "market": "Market", "horizon": "Horizon", "strategy": "Strategy", "parent_strategy": "Parent Strategy",
-    "status": "Status", "source_signal_status": "Signal Status", "trade_status": "Trade Status", "decision": "Decision", "score": "Score", "score_total": "Total Score", "strategy_score": "Strategy Score", "trade_score": "Trade Score",
-    "portfolio_fit": "Portfolio Fit", "portfolio_fit_score": "Portfolio Fit", "trigger": "Trigger", "setup": "Setup", "price": "Price", "entry": "Entry", "entry_price": "Entry Price", "proposed_entry": "Proposed Entry",
-    "buy_range_low": "Buy Range Low", "buy_range_high": "Buy Range High", "max_buy": "Max Buy", "stop": "Stop", "stop_initial": "Initial Stop", "stop_current": "Current Stop", "proposed_stop": "Proposed Stop",
-    "tp1": "TP1", "tp2": "TP2", "proposed_target": "Proposed Target", "last_price": "Last Price", "exit_price": "Exit Price", "qty": "Qty", "capital": "Capital", "gross_pnl": "Gross P&L", "net_pnl": "Net P&L",
-    "return_pct": "Return %", "win_rate": "Win Rate", "profit_factor": "Profit Factor", "trades": "Trades", "rr_net_tp1": "Net R/R TP1", "rr_net_tp2": "Net R/R TP2", "distance_to_entry_pct": "Distance to Entry",
-    "alert_type": "Alert Type", "alert_price": "Alert Price", "reason": "Reason", "data_quality": "Data Quality", "regime": "Regime", "regime_state": "Regime", "gate_result": "Gate Result",
-    "ret_d1": "Return D+1", "ret_d3": "Return D+3", "ret_d5": "Return D+5", "ret_d10": "Return D+10", "ret_d20": "Return D+20", "ret_d60": "Return D+60", "excess_ret_d20": "Excess Return D+20 vs SPY",
-    "mfe_pct": "MFE %", "mae_pct": "MAE %", "mfe_r": "MFE (R)", "mae_r": "MAE (R)", "bars_to_mfe": "Bars to MFE", "bars_to_mae": "Bars to MAE", "block_reasons": "Block Reasons",
-    "position_id": "Position ID", "event_type": "Event Type", "old_stop": "Old Stop", "new_stop": "New Stop", "note": "Note", "run_timestamp": "Run Timestamp", "run_id": "Run ID", "engine_version": "Engine Version", "candidates_count": "Candidates",
-    "variant_id": "Variant ID", "generation": "Generation", "promoted_to_core": "Promoted to Core", "mutation_reason": "Mutation Reason", "parameters": "Parameters", "notes": "Notes", "entry_score": "Entry Score", "atr_stop_mult": "ATR Stop Multiplier",
+    "created_at": "Created At", "last_seen_at": "Last Seen", "last_checked_date": "Last Checked", "signal_date": "Signal Date",
+    "source_signal_date": "Source Signal Date", "opened_at": "Opened At", "symbol": "Ticker", "ticker": "Ticker",
+    "azienda": "Company", "company_name_display": "Company", "market": "Market", "horizon": "Horizon", "strategy": "Strategy",
+    "parent_strategy": "Parent Strategy", "status": "Status", "source_signal_status": "Signal Status", "trade_status": "Trade Status",
+    "decision": "Decision", "score": "Score", "score_total": "Total Score", "strategy_score": "Strategy Score",
+    "trade_score": "Trade Score", "portfolio_fit": "Portfolio Fit", "portfolio_fit_score": "Portfolio Fit", "trigger": "Trigger",
+    "setup": "Setup", "price": "Price", "entry": "Entry", "entry_price": "Entry Price", "proposed_entry": "Proposed Entry",
+    "buy_range_low": "Buy Range Low", "buy_range_high": "Buy Range High", "max_buy": "Max Buy", "stop": "Stop",
+    "stop_initial": "Initial Stop", "stop_current": "Current Stop", "proposed_stop": "Proposed Stop", "tp1": "TP1", "tp2": "TP2",
+    "proposed_target": "Proposed Target", "last_price": "Last Price", "exit_price": "Exit Price", "qty": "Qty", "capital": "Capital",
+    "gross_pnl": "Gross P&L", "net_pnl": "Net P&L", "return_pct": "Return %", "win_rate": "Win Rate", "profit_factor": "Profit Factor",
+    "trades": "Trades", "rr_net_tp1": "Net R/R TP1", "rr_net_tp2": "Net R/R TP2", "distance_to_entry_pct": "Distance to Entry",
+    "alert_type": "Alert Type", "alert_price": "Alert Price", "reason": "Reason", "data_quality": "Data Quality", "regime": "Regime",
+    "regime_state": "Regime", "gate_result": "Gate Result", "ret_d1": "Return D+1", "ret_d3": "Return D+3", "ret_d5": "Return D+5",
+    "ret_d10": "Return D+10", "ret_d20": "Return D+20", "ret_d60": "Return D+60", "excess_ret_d1": "Excess Return D+1 vs SPY",
+    "excess_ret_d3": "Excess Return D+3 vs SPY", "excess_ret_d5": "Excess Return D+5 vs SPY", "excess_ret_d10": "Excess Return D+10 vs SPY",
+    "excess_ret_d20": "Excess Return D+20 vs SPY", "excess_ret_d60": "Excess Return D+60 vs SPY", "mfe_pct": "MFE %", "mae_pct": "MAE %",
+    "mfe_r": "MFE (R)", "mae_r": "MAE (R)", "bars_to_mfe": "Bars to MFE", "bars_to_mae": "Bars to MAE", "block_reasons": "Block Reasons",
+    "position_id": "Position ID", "event_type": "Event Type", "old_stop": "Old Stop", "new_stop": "New Stop", "note": "Note",
+    "run_timestamp": "Run Timestamp", "run_id": "Run ID", "engine_version": "Engine Version", "candidates_count": "Candidates",
+    "variant_id": "Variant ID", "generation": "Generation", "promoted_to_core": "Promoted to Core", "mutation_reason": "Mutation Reason",
+    "parameters": "Parameters", "notes": "Notes", "entry_score": "Entry Score", "atr_stop_mult": "ATR Stop Multiplier",
     "target_r_multiple": "Target R Multiple", "train_return_pct": "Train Return %", "test_return_pct": "Test Return %", "test_trades": "Test Trades",
 }
 
@@ -62,18 +100,18 @@ COLUMN_LABELS = {
 def _sidebar_navigation() -> None:
     st.sidebar.markdown("## 📈 TRADING 2.0")
     st.sidebar.caption("DECISION · RISK · RESEARCH")
-    st.sidebar.page_link("app.py", label="🏠  CONTROL ROOM")
+    st.sidebar.page_link("app.py", label="🏠 CONTROL ROOM")
     st.sidebar.markdown("---")
     st.sidebar.caption("CORE")
-    st.sidebar.page_link("pages/7_Core_Opportunities.py", label="🎯  BUY / PRE-BUY HIGH")
-    st.sidebar.page_link("pages/1_Signals.py", label="📋  CORE SIGNALS")
+    st.sidebar.page_link("pages/7_Core_Opportunities.py", label="🎯 BUY / PRE-BUY HIGH")
+    st.sidebar.page_link("pages/1_Signals.py", label="📋 CORE SIGNALS")
     st.sidebar.markdown("---")
     st.sidebar.caption("LABORATORY")
-    st.sidebar.page_link("pages/5_Action_Center.py", label="⚡  ACTION CENTER")
-    st.sidebar.page_link("pages/2_Portfolio.py", label="💼  PAPER PORTFOLIO")
-    st.sidebar.page_link("pages/6_Backtest_Research.py", label="🧪  STRATEGY LAB")
-    st.sidebar.page_link("pages/3_Laboratory.py", label="📊  SIGNAL OUTCOMES")
-    st.sidebar.page_link("pages/4_Engine_Health.py", label="🩺  ENGINE HEALTH")
+    st.sidebar.page_link("pages/5_Action_Center.py", label="⚡ ACTION CENTER")
+    st.sidebar.page_link("pages/2_Portfolio.py", label="💼 PAPER PORTFOLIO")
+    st.sidebar.page_link("pages/6_Backtest_Research.py", label="🧪 STRATEGY LAB")
+    st.sidebar.page_link("pages/3_Laboratory.py", label="📊 SIGNAL OUTCOMES")
+    st.sidebar.page_link("pages/4_Engine_Health.py", label="🩺 ENGINE HEALTH")
     st.sidebar.markdown("---")
     st.sidebar.caption(f"UI BUILD {UI_BUILD}")
     st.sidebar.caption("© 2026 Antonio Larocca · Tutti i diritti riservati.")
@@ -97,7 +135,7 @@ def apply_theme() -> None:
     .strategy-card {border:1px solid rgba(128,128,128,.18);border-radius:16px;padding:15px;min-height:190px;background:rgba(128,128,128,.035);}.strategy-name {font-size:1rem;font-weight:760;margin-bottom:4px;}.strategy-meta {font-size:.76rem;opacity:.68;margin-bottom:9px;}
     .pill {display:inline-block;padding:3px 8px;border-radius:999px;font-size:.69rem;font-weight:700;margin-right:4px;margin-bottom:4px;background:rgba(99,102,241,.12);}.status-good {background:rgba(34,197,94,.14);}.status-mid {background:rgba(234,179,8,.16);}.status-bad {background:rgba(239,68,68,.13);}.status-na {background:rgba(148,163,184,.16);}
     div[data-testid="stDataFrame"] {border:1px solid rgba(128,128,128,.13);border-radius:12px;overflow:hidden;}.candidate-title {font-size:1.02rem;font-weight:780;margin:0 0 .15rem 0;line-height:1.18;}.company-name {font-size:.76rem;opacity:.66;font-weight:500;margin-left:.2rem;}.candidate-state {font-size:.70rem;opacity:.62;margin:.05rem 0 .45rem 0;text-transform:uppercase;}.candidate-detail {font-size:.74rem;opacity:.80;line-height:1.42;margin-top:.20rem;}
-    .trigger-badge {display:inline-block;padding:3px 7px;border-radius:8px;font-size:.70rem;font-weight:800;}.trigger-confirmed {background:rgba(34,197,94,.13);}.trigger-wait {background:rgba(234,179,8,.15);}.trigger-buy {background:rgba(59,130,246,.12);}
+    .trigger-badge {display:inline-block;padding:3px 7px;border-radius:8px;font-size:.70rem;font-weight:800;}.trigger-confirmed {background:rgba(34,197,94,.14);}.trigger-wait {background:rgba(245,158,11,.16);}.trigger-buy {background:rgba(59,130,246,.14);}.trigger-invalid {background:rgba(239,68,68,.15);}.trigger-na {background:rgba(148,163,184,.14);}
     .site-footer {position:fixed;left:0;right:0;bottom:0;z-index:999;padding:.50rem 1rem;text-align:center;font-size:.72rem;opacity:.78;backdrop-filter:blur(10px);background:rgba(250,250,250,.88);border-top:1px solid rgba(128,128,128,.14);}@media (prefers-color-scheme:dark){.site-footer{background:rgba(14,17,23,.88);}}
     </style>
     """, unsafe_allow_html=True)
@@ -157,9 +195,12 @@ def fmt_regime(value: Any) -> str:
 def fmt_quality(value: Any) -> str:
     text = "N/D" if value is None else str(value).strip().upper(); return QUALITY_LABELS.get(text, text)
 def fmt_trigger(value: Any) -> str:
-    text = "N/D" if value is None else str(value).strip().upper().replace("_", " "); return {"CONFIRMED":"CONFIRMED","WAITING":"WAITING","WAIT":"WAIT","BUY ZONE":"BUY ZONE","ENTRY REACHED":"ENTRY REACHED","INVALID":"INVALID"}.get(text, text)
+    text = "N/D" if value is None else str(value).strip().upper().replace("_", " ")
+    return {"CONFIRMED":"CONFIRMED","WAITING":"WAITING","WAIT":"WAIT","BUY ZONE":"BUY ZONE","ENTRY REACHED":"ENTRY REACHED","INVALID":"INVALID"}.get(text, text)
 def trigger_class(trigger: str) -> str:
-    t = str(trigger).upper()
+    t = str(trigger).upper().strip()
+    if not t or t in {"N/D", "NONE", "NAN"}: return "trigger-na"
+    if "INVALID" in t or "BLOCK" in t or "STOP" in t: return "trigger-invalid"
     if "CONFIRMED" in t: return "trigger-confirmed"
     if "BUY" in t or "ENTRY" in t: return "trigger-buy"
     return "trigger-wait"
