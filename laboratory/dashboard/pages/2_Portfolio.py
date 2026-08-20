@@ -17,15 +17,15 @@ from lab.data import (
     load_trades,
 )
 from lab.settings import CAPITAL_TOTAL_BASE, MAX_POSITION_USD, USA_COMMISSION_USD
-from lab.ui import apply_theme, company_name, fmt_money, fmt_pct, fmt_score, page_header
+from lab.ui import apply_theme, company_name, fmt_money, fmt_pct, fmt_score, localize_table, page_header
 
-st.set_page_config(page_title="Trading Lab | Portfolio", layout="wide", page_icon="💼")
+st.set_page_config(page_title="Trading Lab | Portafoglio", layout="wide", page_icon="💼")
 require_dashboard_auth()
 apply_theme()
 page_header(
-    "Lab Portfolio & Watchlist",
-    "Watchlist, alert e posizioni PAPER generati dal laboratorio. Le eventuali posizioni reali Core restano separate e non vengono create dai segnali Lab.",
-    eyebrow="LAB · PAPER · ALERTS · RISK",
+    "Portafoglio simulato e lista di osservazione",
+    "Posizioni simulate, avvisi e candidati generati dal Laboratory. Le eventuali posizioni reali del Core restano separate e non vengono create dai segnali Lab.",
+    eyebrow="LAB · SIMULAZIONI · AVVISI · RISCHIO",
 )
 
 try:
@@ -33,9 +33,8 @@ try:
     paper_positions = load_lab_paper_positions()
     paper_events = load_lab_paper_events()
 except Exception as exc:
-    st.error("Le tabelle operative del Lab non sono ancora disponibili su Supabase.")
+    st.error("Le tabelle operative del Lab non sono disponibili su Supabase.")
     st.code(str(exc))
-    st.info("Esegui una sola volta `laboratory/sql/04_lab_operational_tables.sql` nel Supabase SQL Editor.")
     st.stop()
 
 try:
@@ -55,22 +54,21 @@ if not lab_watch.empty and "status" in lab_watch:
 
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 c1.metric("Capitale Lab", f"{CAPITAL_TOTAL_BASE:,.0f}")
-c2.metric("Max paper position", fmt_money(MAX_POSITION_USD))
-c3.metric("Paper aperte", len(open_paper))
-c4.metric("Capitale paper", fmt_money(paper_capital))
-c5.metric("P&L paper chiuso", fmt_money(paper_net))
-c6.metric("Alert / Watch", len(lab_watch))
+c2.metric("Posizione massima", fmt_money(MAX_POSITION_USD))
+c3.metric("Posizioni simulate aperte", len(open_paper))
+c4.metric("Capitale simulato", fmt_money(paper_capital))
+c5.metric("P&L simulato chiuso", fmt_money(paper_net))
+c6.metric("Candidati osservati", len(lab_watch))
 
 st.caption(
     f"Commissione USA simulata: {fmt_money(USA_COMMISSION_USD)} per lato. "
-    "Il Paper Portfolio è research-only e non invia ordini a Fineco."
+    "Il portafoglio simulato è solo ricerca e non invia ordini a Fineco."
 )
 
-st.markdown("### 🧪 Posizioni PAPER aperte")
+st.markdown("### 🧪 Posizioni simulate aperte")
 if open_paper.empty:
     st.info(
-        "Nessuna posizione PAPER aperta in questo momento. Una posizione viene aperta solo quando il Lab raggiunge "
-        "PAPER_OPEN con trigger CONFIRMED; WATCH e PRE-BUY restano osservazione, non vengono forzati in trade."
+        "Nessuna posizione simulata aperta in questo momento. Una posizione viene aperta solo quando il Lab supera tutti i controlli e la conferma è valida; osservazione e pre-acquisto non vengono forzati in operazioni."
     )
 else:
     display = open_paper.copy()
@@ -83,11 +81,11 @@ else:
         display["return_pct"] = display["return_pct"].map(fmt_pct)
     preferred = ["symbol", "azienda", "strategy", "status", "qty", "capital", "entry_price", "last_price", "stop_current", "tp1", "tp2", "source_signal_date", "opened_at", "last_checked_date"]
     cols = [c for c in preferred if c in display.columns]
-    st.dataframe(display[cols], use_container_width=True, hide_index=True)
+    st.dataframe(localize_table(display[cols]), use_container_width=True, hide_index=True)
 
-st.markdown("### 🎯 Lab Watchlist / Alert")
+st.markdown("### 🎯 Lista di osservazione e avvisi")
 if lab_watch.empty:
-    st.info("Nessun candidato Lab sopra la soglia WATCH nell'ultimo feed disponibile.")
+    st.info("Nessun candidato Lab sopra la soglia di osservazione nell'ultimo aggiornamento disponibile.")
 else:
     display = lab_watch.copy()
     if "symbol" in display:
@@ -101,12 +99,12 @@ else:
         display["score"] = display["score"].map(fmt_score)
     preferred = ["symbol", "azienda", "strategy", "status", "score", "trigger", "alert_type", "alert_price", "price", "entry", "max_buy", "distance_to_entry_pct", "reason", "signal_date", "last_seen_at"]
     cols = [c for c in preferred if c in display.columns]
-    st.dataframe(display[cols], use_container_width=True, hide_index=True)
-    st.caption(f"PRE-BUY / PAPER_OPEN nella watchlist: {prebuy_count}")
+    st.dataframe(localize_table(display[cols]), use_container_width=True, hide_index=True)
+    st.caption(f"Candidati in pre-acquisto o simulazione approvata: {prebuy_count}")
 
-st.markdown("### 🧾 Lifecycle PAPER")
+st.markdown("### 🧾 Cronologia delle simulazioni")
 if paper_events.empty:
-    st.caption("Nessun evento paper ancora registrato.")
+    st.caption("Nessun evento di simulazione ancora registrato.")
 else:
     display = paper_events.copy()
     for col in ["price", "old_stop", "new_stop"]:
@@ -114,11 +112,11 @@ else:
             display[col] = display[col].map(fmt_money)
     preferred = ["created_at", "position_id", "event_type", "price", "old_stop", "new_stop", "note"]
     cols = [c for c in preferred if c in display.columns]
-    st.dataframe(display[cols].head(100), use_container_width=True, hide_index=True)
+    st.dataframe(localize_table(display[cols]).head(100), use_container_width=True, hide_index=True)
 
 with st.expander("Posizioni REALI Core · separate dal Lab", expanded=False):
     if real_trades.empty:
-        st.caption("Nessuna posizione reale registrata nel database Core. Questo non impedisce al Paper Portfolio Lab di funzionare.")
+        st.caption("Nessuna posizione reale registrata nel database Core. Questo non impedisce al portafoglio simulato del Lab di funzionare.")
     else:
         real = real_trades.copy()
         if "ticker" in real:
@@ -130,6 +128,6 @@ with st.expander("Posizioni REALI Core · separate dal Lab", expanded=False):
             real["return_pct"] = real["return_pct"].map(fmt_pct)
         preferred = ["ticker", "azienda", "market", "trade_status", "qty", "entry_price", "stop_current", "tp1", "tp2", "net_pnl", "return_pct"]
         cols = [c for c in preferred if c in real.columns]
-        st.dataframe(real[cols], use_container_width=True, hide_index=True)
+        st.dataframe(localize_table(real[cols]), use_container_width=True, hide_index=True)
 
-st.caption("Fonte principale di questa pagina: Strategy Lab. Segnali, watchlist e paper positions restano separati dal monitoraggio Core e dagli ordini reali.")
+st.caption("Fonte principale di questa pagina: Strategy Lab. Segnali, lista di osservazione e posizioni simulate restano separati dal monitoraggio Core e dagli ordini reali.")
