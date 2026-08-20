@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 
-UI_BUILD = "2026.08.20-2030"
+UI_BUILD = "2026.08.20-2035"
 
 STRATEGY_INFO = {
     "trend_continuation": {
