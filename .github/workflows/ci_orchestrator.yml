@@ -5,8 +5,11 @@ on:
     paths:
       - 'orchestrator/**'
       - 'monitor/fast_monitor.py'
+      - 'dashboard/**'
+      - 'supabase/migrations/**'
       - 'tests/test_orchestrator_confluence.py'
       - '.github/workflows/ci_orchestrator.yml'
+      - 'requirements.txt'
 
 permissions:
   contents: read
@@ -22,4 +25,7 @@ jobs:
           cache: 'pip'
       - run: pip install -r requirements.txt
       - run: pytest -q tests/test_orchestrator_confluence.py
-      - run: python -m compileall -q orchestrator monitor/fast_monitor.py
+      - name: Compile operational Python modules
+        run: python -m compileall -q orchestrator monitor/fast_monitor.py dashboard
+      - name: Verify Streamlit entry point imports
+        run: python -c "import ast, pathlib; ast.parse(pathlib.Path('dashboard/app.py').read_text()); print('dashboard syntax OK')"
