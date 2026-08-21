@@ -3,6 +3,7 @@ import importlib, os
 from typing import Any, Dict, List, Tuple
 from engine.models import AnalysisResult
 from engine.market_rules import presentation_state, prebuy_enabled
+from market.session import status as market_session_status
 
 ENV_MAP = {
     "commission_per_side":"COMMISSION_PER_SIDE", "min_price":"MIN_PRICE",
@@ -52,12 +53,25 @@ def normalize_candidate(reference, market: str, c: Dict[str, Any], cfg: Dict[str
 
 def run_full_scan(cfg: Dict[str, Any], persist: bool=True) -> Dict[str, Any]:
     reference=load_reference(cfg)
-    if hasattr(reference,"italian_market_session_status"):
-        s=reference.italian_market_session_status()
-        enforce=getattr(reference,"ENFORCE_MARKET_SESSION",False)
-        force=getattr(reference,"FORCE_RUN_OUTSIDE_SESSION",False)
-        if enforce and not force and not s.get("market_session_open"):
-            return {"market":cfg["market"],"skipped":True,"skip_reason":"market_closed","session":s,"selected":[],"candidates":[]}
+
+    # Session gating is mandatory for every market. Previously USA silently bypassed
+    # this block because only the Italy reference exposed a session helper.
+    s = market_session_status(reference=reference, market=cfg["market"])
+    enforce = bool(cfg.get("enforce_market_session", True))
+    force = bool(cfg.get("force_run_outside_session", False))
+    # Preserve frozen-reference flags when they exist, but never default USA to OPEN.
+    enforce = getattr(reference, "ENFORCE_MARKET_SESSION", enforce)
+    force = getattr(reference, "FORCE_RUN_OUTSIDE_SESSION", force)
+    if enforce and not force and not s.get("market_session_open"):
+        return {
+            "market": cfg["market"],
+            "skipped": True,
+            "skip_reason": "market_closed",
+            "session": s,
+            "selected": [],
+            "candidates": [],
+        }
+
     reference.init_db()
     history=reference.history_health()
     previous=set(reference.get_previous_selected_tickers())
