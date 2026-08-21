@@ -11,13 +11,13 @@ from orchestrator.persistence import client, utcnow
 GITHUB_API = "https://api.github.com"
 
 TARGETS = {
-    "CORE_USA": {"repo": "antoannali-ita/trading-engine-v2", "workflow": "master_scan.yml", "ref": "main", "inputs": {"market": "usa"}},
-    "CORE_ITALY": {"repo": "antoannali-ita/trading-engine-v2", "workflow": "master_scan.yml", "ref": "main", "inputs": {"market": "italy"}},
-    "FAST_USA": {"repo": "antoannali-ita/trading-engine-v2", "workflow": "fast_monitor.yml", "ref": "main", "inputs": {"market": "usa"}},
-    "FAST_ITALY": {"repo": "antoannali-ita/trading-engine-v2", "workflow": "fast_monitor.yml", "ref": "main", "inputs": {"market": "italy"}},
-    "MULTI_USA": {"repo": "antoannali-ita/trading-engine-multihorizon", "workflow": "multihorizon_scan.yml", "ref": "main", "inputs": {"market": "usa", "strategy": "all"}},
-    "MULTI_ITALY": {"repo": "antoannali-ita/trading-engine-multihorizon", "workflow": "multihorizon_scan.yml", "ref": "main", "inputs": {"market": "italy", "strategy": "all"}},
-    "TRADINGAGENTS": {"repo": "antoannali-ita/TradingAgents", "workflow": "orchestrator_analysis.yml", "ref": "main", "inputs": {}},
+    "CORE_USA": {"repo": "antoannali-ita/trading-engine-v2", "workflow": "master_scan.yml", "ref": "main", "inputs": {"market": "usa"}, "allowed_inputs": {"market"}},
+    "CORE_ITALY": {"repo": "antoannali-ita/trading-engine-v2", "workflow": "master_scan.yml", "ref": "main", "inputs": {"market": "italy"}, "allowed_inputs": {"market"}},
+    "FAST_USA": {"repo": "antoannali-ita/trading-engine-v2", "workflow": "fast_monitor.yml", "ref": "main", "inputs": {"market": "usa"}, "allowed_inputs": {"market"}},
+    "FAST_ITALY": {"repo": "antoannali-ita/trading-engine-v2", "workflow": "fast_monitor.yml", "ref": "main", "inputs": {"market": "italy"}, "allowed_inputs": {"market"}},
+    "MULTI_USA": {"repo": "antoannali-ita/trading-engine-multihorizon", "workflow": "multihorizon_scan.yml", "ref": "main", "inputs": {"market": "usa", "strategy": "all"}, "allowed_inputs": {"market", "strategy", "orchestrated", "send_email", "send_whatsapp"}},
+    "MULTI_ITALY": {"repo": "antoannali-ita/trading-engine-multihorizon", "workflow": "multihorizon_scan.yml", "ref": "main", "inputs": {"market": "italy", "strategy": "all"}, "allowed_inputs": {"market", "strategy", "orchestrated", "send_email", "send_whatsapp"}},
+    "TRADINGAGENTS": {"repo": "antoannali-ita/TradingAgents", "workflow": "orchestrator_analysis.yml", "ref": "main", "inputs": {}, "allowed_inputs": {"ticker", "market", "analysis_id", "source_signal_id"}},
 }
 
 
@@ -33,8 +33,9 @@ def dispatch_workflow(engine_id: str, *, extra_inputs: dict[str, Any] | None = N
     if target is None:
         raise KeyError(f"Unknown engine_id: {engine_id}")
     inputs = dict(target.get("inputs") or {})
+    allowed = set(target.get("allowed_inputs") or inputs.keys())
     for key, value in (extra_inputs or {}).items():
-        if value is not None:
+        if key in allowed and value is not None:
             inputs[key] = str(value)
     body = json.dumps({"ref": target["ref"], "inputs": inputs}).encode("utf-8")
     url = f"{GITHUB_API}/repos/{target['repo']}/actions/workflows/{target['workflow']}/dispatches"
