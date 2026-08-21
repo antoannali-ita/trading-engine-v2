@@ -1,0 +1,31 @@
+name: Orchestrator CI
+
+on:
+  pull_request:
+    paths:
+      - 'orchestrator/**'
+      - 'monitor/fast_monitor.py'
+      - 'dashboard/**'
+      - 'supabase/migrations/**'
+      - 'tests/test_orchestrator_confluence.py'
+      - '.github/workflows/ci_orchestrator.yml'
+      - 'requirements.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - run: pytest -q tests/test_orchestrator_confluence.py
+      - name: Compile operational Python modules
+        run: python -m compileall -q orchestrator monitor/fast_monitor.py dashboard
+      - name: Verify Streamlit entry point imports
+        run: python -c "import ast, pathlib; ast.parse(pathlib.Path('dashboard/app.py').read_text()); print('dashboard syntax OK')"
