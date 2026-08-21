@@ -22,6 +22,10 @@ def _norm(value: Any) -> str:
 def signal_family(row: dict) -> str:
     engine = _norm(row.get("engine"))
     strategy = _norm(row.get("strategy"))
+    # Multi-Horizon stays an independent validation layer even when one of its
+    # internal strategies is named CORE/SHORT/FAST.
+    if engine == "MULTI_HORIZON":
+        return "MULTI_HORIZON"
     if engine in {"CORE", "SHORT", "FAST"}:
         return engine
     if "CORE" in strategy:
@@ -30,8 +34,6 @@ def signal_family(row: dict) -> str:
         return "SHORT"
     if "FAST" in strategy:
         return "FAST"
-    if engine == "MULTI_HORIZON":
-        return "MULTI_HORIZON"
     return engine or strategy or "UNKNOWN"
 
 
