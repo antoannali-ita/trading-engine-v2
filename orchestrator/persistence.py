@@ -40,6 +40,7 @@ def record_engine_signal(
     is_actionable: bool = False,
     source_signal_id: str | None = None,
     metadata: dict | None = None,
+    signal_id: str | None = None,
 ) -> str | None:
     db = client()
     if db is None:
@@ -47,7 +48,7 @@ def record_engine_signal(
     ticker = str(ticker or "").upper().strip()
     if not ticker:
         return None
-    signal_id = stable_signal_id(run_id, engine_id, strategy, ticker, signal_type)
+    signal_id = signal_id or stable_signal_id(run_id, engine_id, strategy, ticker, signal_type)
     row = {
         "signal_id": signal_id,
         "run_id": run_id,
