@@ -32,6 +32,32 @@ def _already_notified(db, signal_id: str, channel: str) -> bool:
     return bool(rows)
 
 
+def _matching_confluence(ai: dict, confluences: list[dict]) -> dict | None:
+    source_signal_id = str(ai.get("source_signal_id") or "").strip()
+    ticker = str(ai.get("ticker") or "").upper()
+    market = str(ai.get("market") or "").upper()
+
+    if source_signal_id:
+        for row in confluences:
+            if str(row.get("signal_id") or "") == source_signal_id:
+                return row
+        # Backward compatibility for AI rows created before confluence ids became the source id.
+        for row in confluences:
+            metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            if source_signal_id in set(metadata.get("source_signal_ids") or []):
+                return row
+
+    matches = [
+        row for row in confluences
+        if str(row.get("ticker") or "").upper() == ticker
+        and str(row.get("market") or "").upper() == market
+    ]
+    if not matches:
+        return None
+    matches.sort(key=lambda row: _parse_ts(row.get("detected_at")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    return matches[0]
+
+
 def _render(confluence: dict, ai: dict) -> tuple[str, str, str]:
     level = str(confluence.get("decision") or confluence.get("signal_type") or "SIGNAL")
     alignment = str(ai.get("alignment") or "NEUTRAL")
@@ -84,13 +110,11 @@ def send_qualified_notifications(hours: int = 24) -> dict[str, int]:
     )
     stats = {"email": 0, "whatsapp": 0}
     for ai in analyses:
-        ticker = str(ai.get("ticker") or "").upper()
-        market = str(ai.get("market") or "").upper()
-        matches = [r for r in confluences if str(r.get("ticker") or "").upper() == ticker and str(r.get("market") or "").upper() == market]
-        if not matches:
+        signal = _matching_confluence(ai, confluences)
+        if not signal:
             continue
-        signal = matches[0]
         signal_id = signal.get("signal_id")
+        ticker = str(signal.get("ticker") or ai.get("ticker") or "").upper()
         if not signal_id:
             continue
         subject, html, wa_text = _render(signal, ai)
