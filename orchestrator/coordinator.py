@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from orchestrator.confluence import compute_confluence, is_positive, signal_family
 from orchestrator.dispatcher import dispatch_pending_requests, dispatch_workflow
+from orchestrator.notifier import send_qualified_notifications
 from orchestrator.persistence import (
     client,
     create_ai_pending,
@@ -30,16 +31,7 @@ def _parse_ts(value):
 
 def _has_recent_event(db, event_type: str, market: str, minutes: int) -> bool:
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
-    rows = (
-        db.table("system_events")
-        .select("event_id,details")
-        .eq("event_type", event_type)
-        .gte("occurred_at", cutoff)
-        .limit(100)
-        .execute()
-        .data
-        or []
-    )
+    rows = db.table("system_events").select("event_id,details").eq("event_type", event_type).gte("occurred_at", cutoff).limit(100).execute().data or []
     return any(str((row.get("details") or {}).get("market") or "").upper() == market.upper() for row in rows)
 
 
@@ -77,7 +69,7 @@ def run_once() -> dict:
 
     run_id = f"orchestrator-{os.getenv('GITHUB_RUN_ID') or datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     tracker = RunTracker.start("ORCHESTRATOR", "GLOBAL", "CONFLUENCE", run_id)
-    stats = {"manual_dispatched": 0, "manual_failed": 0, "multi_dispatched": 0, "ai_dispatched": 0, "confluence": 0}
+    stats = {"manual_dispatched": 0, "manual_failed": 0, "multi_dispatched": 0, "ai_dispatched": 0, "confluence": 0, "email_sent": 0, "whatsapp_sent": 0}
     try:
         manual = dispatch_pending_requests()
         stats["manual_dispatched"] = manual["dispatched"]
@@ -91,39 +83,22 @@ def run_once() -> dict:
             source_ids = sorted(item["source_signal_ids"])
             confluence_id = stable_signal_id("CONFLUENCE", item["market"], item["ticker"], item["level"], *source_ids)
             record_engine_signal(
-                run_id=run_id,
-                engine_id="ORCHESTRATOR",
-                engine="ORCHESTRATOR",
-                strategy="CONFLUENCE",
-                market=item["market"],
-                ticker=item["ticker"],
-                signal_type=item["level"],
-                decision=item["level"],
-                score=item["score"],
-                is_actionable=item["eligible_for_ai"],
+                run_id=run_id, engine_id="ORCHESTRATOR", engine="ORCHESTRATOR", strategy="CONFLUENCE",
+                market=item["market"], ticker=item["ticker"], signal_type=item["level"], decision=item["level"],
+                score=item["score"], is_actionable=item["eligible_for_ai"],
                 source_signal_id=source_ids[0] if source_ids else None,
-                metadata={
-                    "families": item["families"],
-                    "positive_count": item["positive_count"],
-                    "multi_horizon_positive": item["multi_horizon_positive"],
-                    "source_signal_ids": source_ids,
-                },
+                metadata={"families": item["families"], "positive_count": item["positive_count"], "multi_horizon_positive": item["multi_horizon_positive"], "source_signal_ids": source_ids},
                 signal_id=confluence_id,
             )
 
-        # A fresh actionable base signal asks Multi-Horizon for a second layer.
         for market in {item["market"] for item in confluences if item["eligible_for_multi"]}:
-            if not _recent_base_activity(rows, market):
-                continue
-            if _has_recent_event(db, "MULTI_DISPATCH", market, 60):
+            if not _recent_base_activity(rows, market) or _has_recent_event(db, "MULTI_DISPATCH", market, 60):
                 continue
             engine_id = "MULTI_USA" if market == "USA" else "MULTI_ITALY"
             dispatch_workflow(engine_id)
             tracker.event("MULTI_DISPATCH", f"Dispatched {engine_id}", details={"market": market})
             stats["multi_dispatched"] += 1
 
-        # TradingAgents is intentionally selective: double confirmation OR
-        # one base engine confirmed by Multi-Horizon.
         ai_rows = recent_ai_analysis()
         for item in confluences:
             if not item["eligible_for_ai"]:
@@ -131,26 +106,20 @@ def run_once() -> dict:
             source_signal_id = item["source_signal_ids"][0] if item["source_signal_ids"] else None
             if _ai_already_requested(ai_rows, item["ticker"], source_signal_id):
                 continue
-            analysis_id = create_ai_pending(
-                ticker=item["ticker"],
-                market=item["market"],
-                source_signal_id=source_signal_id,
-                trigger_reason=f"{item['level']} | MULTI={item['multi_horizon_positive']}",
-            )
+            analysis_id = create_ai_pending(ticker=item["ticker"], market=item["market"], source_signal_id=source_signal_id, trigger_reason=f"{item['level']} | MULTI={item['multi_horizon_positive']}")
             if not analysis_id:
                 continue
             try:
-                dispatch_workflow("TRADINGAGENTS", extra_inputs={
-                    "ticker": item["ticker"],
-                    "market": item["market"].lower(),
-                    "analysis_id": analysis_id,
-                    "source_signal_id": source_signal_id or "",
-                })
+                dispatch_workflow("TRADINGAGENTS", extra_inputs={"ticker": item["ticker"], "market": item["market"].lower(), "analysis_id": analysis_id, "source_signal_id": source_signal_id or ""})
                 tracker.event("AI_DISPATCH", f"TradingAgents dispatched for {item['ticker']}", details={"market": item["market"], "analysis_id": analysis_id})
                 stats["ai_dispatched"] += 1
             except Exception as exc:
                 db.table("ai_analysis").update({"status": "FAILED", "completed_at": utcnow(), "error_message": f"{type(exc).__name__}: {exc}"[:4000]}).eq("analysis_id", analysis_id).execute()
                 raise
+
+        notified = send_qualified_notifications()
+        stats["email_sent"] = notified["email"]
+        stats["whatsapp_sent"] = notified["whatsapp"]
 
         tracker.finish("SUCCESS", records_processed=len(rows), signals_found=len(confluences))
         return stats
