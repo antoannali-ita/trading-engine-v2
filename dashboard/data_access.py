@@ -4,8 +4,11 @@ import os
 from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from supabase import create_client
+
+ROME_TZ = ZoneInfo("Europe/Rome")
 
 
 @lru_cache(maxsize=1)
@@ -43,27 +46,14 @@ def engine_health() -> list[dict[str, Any]]:
         row = dict(item)
         has_run = any(row.get(k) for k in ("last_run_at", "last_started_at", "last_finished_at", "last_run_id"))
 
-        # UNKNOWN with no run is not an engine failure: the engine is registered
-        # but has not produced a tracked execution yet. Make that explicit.
         if not has_run and str(row.get("computed_health") or "").upper() in {"", "UNKNOWN"}:
             row["computed_health"] = "NOT_RUN"
         if not has_run and str(row.get("registry_status") or "").upper() in {"", "UNKNOWN"}:
             row["registry_status"] = "REGISTERED"
 
-        # Missing schedule metadata is a configuration gap, not a numeric zero.
-        # Show N/D instead of Python/SQL None so the operator can distinguish it.
-        if row.get("expected_interval_minutes") is None:
-            row["expected_interval_minutes"] = "N/D"
-        if row.get("next_expected_run_at") is None:
-            row["next_expected_run_at"] = "N/D"
-        if row.get("last_run_id") is None:
-            row["last_run_id"] = "N/D"
-        if row.get("last_run_status") is None:
-            row["last_run_status"] = "N/D"
-        if row.get("duration_seconds") is None:
-            row["duration_seconds"] = "N/D"
-        if row.get("signals_found") is None:
-            row["signals_found"] = "N/D"
+        for field in ("expected_interval_minutes", "next_expected_run_at", "last_run_id", "last_run_status", "duration_seconds", "signals_found"):
+            if row.get(field) is None:
+                row[field] = "N/D"
 
         cleaned.append(row)
     return cleaned
@@ -91,13 +81,19 @@ def latest_confluence(limit: int = 300) -> list[dict[str, Any]]:
 def runs(limit: int = 500) -> list[dict[str, Any]]:
     rows = table_rows("engine_runs", columns="run_id,engine_id,market,strategy,trigger_source,requested_by,started_at,finished_at,status,duration_seconds,records_processed,signals_found,error_message,github_run_id", order="started_at", limit=limit)
 
-    # Old scheduler heartbeat rows without engine_id/run timestamps are not real
-    # engine executions. Keeping them in "Run recenti" only creates blank noise.
-    valid = []
+    valid: list[dict[str, Any]] = []
     for item in rows:
+        # Historical scheduler heartbeat rows without a real engine/run are not
+        # executions and only create blank rows in Operations -> Run & Log.
         if not item.get("engine_id") or not item.get("run_id"):
             continue
-        valid.append(item)
+        row = dict(item)
+        for field in ("duration_seconds", "records_processed", "signals_found"):
+            if row.get(field) is None:
+                row[field] = "N/D"
+        if row.get("error_message") is None:
+            row["error_message"] = "-"
+        valid.append(row)
     return valid
 
 
@@ -109,7 +105,17 @@ def ai_analysis(limit: int = 500) -> list[dict[str, Any]]:
 
 
 def notifications(limit: int = 500) -> list[dict[str, Any]]:
-    return table_rows("notification_events", columns="notification_id,run_id,signal_id,ticker,event_type,channel,attempted_at,sent_at,status,provider,error_message,payload", order="attempted_at", limit=limit)
+    rows = table_rows("notification_events", columns="notification_id,run_id,signal_id,ticker,event_type,channel,attempted_at,sent_at,status,provider,error_message,payload", order="attempted_at", limit=limit)
+    cleaned: list[dict[str, Any]] = []
+    for item in rows:
+        row = dict(item)
+        # CORE_REPORT is intentionally market/report-wide, so there may be no ticker.
+        if not row.get("ticker"):
+            row["ticker"] = "REPORT" if str(row.get("event_type") or "").upper() == "CORE_REPORT" else "N/D"
+        if row.get("error_message") is None:
+            row["error_message"] = "-"
+        cleaned.append(row)
+    return cleaned
 
 
 def system_events(limit: int = 300) -> list[dict[str, Any]]:
@@ -137,7 +143,6 @@ def request_run(engine_id: str, market: str, strategy: str | None, *, send_email
     return rows[0] if rows else payload
 
 
-# Laboratory: compatibilita con le tabelle usate dal sito precedente.
 def lab_watchlist(limit: int = 1000) -> list[dict[str, Any]]:
     return safe_table_rows("lab_watchlist", order="score", limit=limit, filters=[("eq", "active", True)])
 
@@ -183,12 +188,13 @@ def core_high_conviction(limit: int = 500) -> list[dict[str, Any]]:
 
 
 def utc_label(value: str | None) -> str:
+    """Render every stored timestamp in Italian local time (Europe/Rome)."""
     if not value:
         return "-"
     try:
         dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone().strftime("%d/%m/%Y %H:%M")
+        return dt.astimezone(ROME_TZ).strftime("%d/%m/%Y %H:%M")
     except Exception:
         return str(value)
