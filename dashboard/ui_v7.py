@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Presentation hardening for the Trading Engine dashboard."""
 
+import time
 from typing import Any
 
 import numpy as np
@@ -15,6 +16,8 @@ except ModuleNotFoundError:
 
 _original_lab_watchlist = data_access.lab_watchlist
 _original_lab_paper_signals = data_access.lab_paper_signals
+_original_request_run = data_access.request_run
+_original_manual_requests = data_access.manual_requests
 
 
 def _enriched_lab_watchlist(limit: int = 1000) -> list[dict[str, Any]]:
@@ -39,7 +42,125 @@ def _enriched_lab_watchlist(limit: int = 1000) -> list[dict[str, Any]]:
     return enriched
 
 
+def _request_run_with_progress(
+    engine_id: str,
+    market: str,
+    strategy: str | None,
+    *,
+    send_email: bool,
+    send_whatsapp: bool,
+    requested_by: str = "dashboard",
+) -> dict:
+    """Create a manual run request and keep the operator informed while it advances.
+
+    The actual execution is asynchronous (Supabase -> Orchestrator -> GitHub Actions),
+    so the UI polls the request record for up to two minutes. The user sees a real
+    progress state instead of a blank/static page.
+    """
+    created = _original_request_run(
+        engine_id,
+        market,
+        strategy,
+        send_email=send_email,
+        send_whatsapp=send_whatsapp,
+        requested_by=requested_by,
+    )
+    request_id = str(created.get("request_id") or "").strip()
+    if not request_id:
+        st.error("Richiesta creata senza request_id: impossibile seguirne lo stato.")
+        return created
+
+    labels = {
+        "REQUESTED": (10, "Richiesta registrata"),
+        "PENDING": (15, "In attesa di presa in carico"),
+        "DISPATCHED": (35, "Workflow inviato a GitHub Actions"),
+        "RUNNING": (65, "Motore in esecuzione"),
+        "STARTED": (65, "Motore in esecuzione"),
+        "SUCCESS": (100, "Esecuzione completata"),
+        "COMPLETED": (100, "Esecuzione completata"),
+        "FAILED": (100, "Esecuzione terminata con errore"),
+        "ERROR": (100, "Esecuzione terminata con errore"),
+        "CANCELLED": (100, "Esecuzione annullata"),
+    }
+
+    with st.status(f"⏳ Avvio {engine_id} | {market.upper()}", expanded=True) as status_box:
+        progress = st.progress(5, text="Creazione richiesta...")
+        st.write(f"Request ID: `{request_id}`")
+        deadline = time.time() + 120
+        last_state = None
+        latest = created
+
+        while time.time() < deadline:
+            rows = _original_manual_requests(250)
+            current = next((r for r in rows if str(r.get("request_id") or "") == request_id), None)
+            if current:
+                latest = current
+                state = str(current.get("status") or "REQUESTED").upper()
+                pct, label = labels.get(state, (25, f"Stato: {state}"))
+                progress.progress(pct, text=label)
+
+                if state != last_state:
+                    st.write(f"• {label}")
+                    if current.get("github_run_id"):
+                        st.write(f"• GitHub run: `{current.get('github_run_id')}`")
+                    if current.get("run_id"):
+                        st.write(f"• Engine run: `{current.get('run_id')}`")
+                    last_state = state
+
+                if state in {"SUCCESS", "COMPLETED"}:
+                    progress.progress(100, text="Completato")
+                    status_box.update(label=f"✅ {engine_id} completato", state="complete", expanded=False)
+                    st.cache_data.clear()
+                    return latest
+
+                if state in {"FAILED", "ERROR", "CANCELLED"}:
+                    err = current.get("error_message") or "Nessun dettaglio errore disponibile"
+                    st.error(str(err))
+                    status_box.update(label=f"❌ {engine_id}: {state}", state="error", expanded=True)
+                    return latest
+
+            time.sleep(2)
+
+        progress.progress(80, text="Run avviato; completamento non ancora registrato entro 120 s")
+        st.info("Il run continua in background. Lo stato sarà visibile in Operations → Run & Log.")
+        status_box.update(label=f"⏳ {engine_id} ancora in esecuzione", state="running", expanded=False)
+        return latest
+
+
 data_access.lab_watchlist = _enriched_lab_watchlist
+data_access.request_run = _request_run_with_progress
+
+
+# Quick operator guide: always available, independent of the current tab.
+with st.sidebar:
+    st.markdown("### 🧭 Guida rapida")
+    st.caption("Cosa guardare senza perdersi tra tabelle nate per moltiplicarsi durante la notte.")
+    with st.expander("Controllo quotidiano", expanded=False):
+        st.markdown(
+            """
+1. **Engine Health** → i motori devono essere HEALTHY.
+2. **Segnali** → cerca setup con prezzo, entry, stop e TP valorizzati.
+3. **Decisioni** → verifica confluenza e `is_actionable`.
+4. **TradingAgents** → seconda opinione, eventuali CAUTION/VETO.
+5. **Notifiche** → conferma che Email/WhatsApp siano state realmente inviate.
+6. **Performance** → misura se i segnali funzionano davvero nel tempo.
+"""
+        )
+    with st.expander("Flusso del sistema", expanded=False):
+        st.code("CORE / FAST → Supabase → Orchestrator → Multi-Horizon → TradingAgents → Notifiche → Performance")
+    with st.expander("Stati principali", expanded=False):
+        st.markdown(
+            """
+- **HEALTHY**: motore regolare.
+- **NOT_RUN**: registrato ma non ancora eseguito/tracciato.
+- **STALE**: non gira da troppo tempo.
+- **FAILED**: errore tecnico.
+- **IN_BUY_ZONE / PRE_BUY_HIGH**: candidato da verificare, non ordine automatico.
+- **Actionable = True**: ha superato i gate previsti per avanzare.
+- **CONFIRM / NEUTRAL / CAUTION / VETO**: giudizio TradingAgents.
+"""
+        )
+
 
 _original_dataframe = st.dataframe
 
