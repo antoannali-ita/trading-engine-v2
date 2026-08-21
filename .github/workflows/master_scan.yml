@@ -7,9 +7,11 @@ on:
         description: Market
         required: true
         type: choice
-        options:
-          - usa
-          - italy
+        options: [usa, italy]
+      request_id:
+        description: Optional manual_run_requests UUID
+        required: false
+        type: string
   push:
     paths:
       - '.github/workflows/master_scan.yml'
@@ -21,19 +23,12 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Restore / save CORE runtime data
-        uses: actions/cache@v4
+      - run: pip install -r requirements.txt
+      - uses: actions/cache@v4
         with:
           path: data
           key: v2-core-runtime-${{ runner.os }}-${{ github.run_id }}
@@ -42,10 +37,7 @@ jobs:
             v2-parity-${{ runner.os }}-
             v2-fast-italy-${{ runner.os }}-
             v2-fast-usa-${{ runner.os }}-
-
-      - name: Run test suite
-        run: pytest -q
-
+      - run: pytest -q
       - name: Determine market
         id: market
         shell: bash
@@ -59,14 +51,10 @@ jobs:
           elif [ "${{ github.event.schedule }}" = "0 17 * * 1-5" ]; then
             MARKET="usa"
           else
-            echo "Unable to determine market."
             exit 1
           fi
           echo "market=$MARKET" >> "$GITHUB_OUTPUT"
-          echo "Selected market: $MARKET"
-
       - name: Run Master Scan
-        shell: bash
         env:
           GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
           GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
@@ -77,7 +65,7 @@ jobs:
           PORTFOLIO_POSITIONS_JSON: ${{ secrets.PORTFOLIO_POSITIONS_JSON }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-        run: |
-          echo "Starting MASTER_SCAN for ${{ steps.market.outputs.market }}"
-          python -m monitor.master_scan --market "${{ steps.market.outputs.market }}"
-          echo "MASTER_SCAN completed."
+          MANUAL_REQUEST_ID: ${{ inputs.request_id }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: python -m monitor.master_scan --market "${{ steps.market.outputs.market }}"
