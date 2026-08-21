@@ -81,7 +81,7 @@ select
   outcome,
   count(*) as observations,
   round(avg(pnl_pct), 4) as avg_pnl_pct,
-  round(percentile_cont(0.5) within group (order by pnl_pct)::numeric, 4) as median_pnl_pct,
+  round((percentile_cont(0.5) within group (order by pnl_pct))::numeric, 4) as median_pnl_pct,
   round(avg(max_drawdown_pct), 4) as avg_drawdown_pct,
   round(avg(max_favorable_excursion_pct), 4) as avg_mfe_pct,
   round((100.0 * avg(case when pnl_pct > 0 then 1 else 0 end))::numeric, 2) as win_rate_pct
