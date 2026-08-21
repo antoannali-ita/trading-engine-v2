@@ -9,6 +9,7 @@ on:
       - 'supabase/migrations/**'
       - 'tests/test_orchestrator_confluence.py'
       - '.github/workflows/ci_orchestrator.yml'
+      - '.github/workflows/orchestrator_tick.yml'
       - 'requirements.txt'
 
 permissions:

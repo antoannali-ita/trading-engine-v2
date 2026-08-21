@@ -27,15 +27,10 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           ORCHESTRATOR_GITHUB_TOKEN: ${{ secrets.ORCHESTRATOR_GITHUB_TOKEN }}
-          TRIGGER_SOURCE: ORCHESTRATOR
-        run: python -m orchestrator.coordinator
-      - name: Send centralized qualified notifications
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
           GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
           WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
-        run: python -c "from orchestrator.notifier import send_qualified_notifications; print(send_qualified_notifications())"
+          TRIGGER_SOURCE: ORCHESTRATOR
+        run: python -m orchestrator.coordinator

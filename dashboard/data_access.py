@@ -45,7 +45,30 @@ def signals(limit: int = 1000) -> list[dict[str, Any]]:
 
 
 def latest_confluence(limit: int = 300) -> list[dict[str, Any]]:
-    return table_rows("v_dashboard_latest_confluence", order="detected_at", limit=limit)
+    # Migration 002 adds a compact view. Until it is applied, fall back to the
+    # normalized signals table so the dashboard can be deployed immediately.
+    try:
+        return table_rows("v_dashboard_latest_confluence", order="detected_at", limit=limit)
+    except Exception:
+        rows = (
+            get_client()
+            .table("signals")
+            .select("signal_id,run_id,market,ticker,signal_type,decision,conviction,is_actionable,detected_at,metadata")
+            .eq("engine", "ORCHESTRATOR")
+            .order("detected_at", desc=True)
+            .limit(max(limit * 4, 500))
+            .execute()
+            .data
+            or []
+        )
+        latest: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in rows:
+            key = (str(row.get("market") or ""), str(row.get("ticker") or ""))
+            if key not in latest:
+                latest[key] = row
+            if len(latest) >= limit:
+                break
+        return list(latest.values())
 
 
 def runs(limit: int = 500) -> list[dict[str, Any]]:
