@@ -37,7 +37,36 @@ def safe_table_rows(table: str, *, columns: str = "*", order: str | None = None,
 
 
 def engine_health() -> list[dict[str, Any]]:
-    return get_client().table("v_engine_health").select("*").order("engine_id").execute().data or []
+    rows = get_client().table("v_engine_health").select("*").order("engine_id").execute().data or []
+    cleaned: list[dict[str, Any]] = []
+    for item in rows:
+        row = dict(item)
+        has_run = any(row.get(k) for k in ("last_run_at", "last_started_at", "last_finished_at", "last_run_id"))
+
+        # UNKNOWN with no run is not an engine failure: the engine is registered
+        # but has not produced a tracked execution yet. Make that explicit.
+        if not has_run and str(row.get("computed_health") or "").upper() in {"", "UNKNOWN"}:
+            row["computed_health"] = "NOT_RUN"
+        if not has_run and str(row.get("registry_status") or "").upper() in {"", "UNKNOWN"}:
+            row["registry_status"] = "REGISTERED"
+
+        # Missing schedule metadata is a configuration gap, not a numeric zero.
+        # Show N/D instead of Python/SQL None so the operator can distinguish it.
+        if row.get("expected_interval_minutes") is None:
+            row["expected_interval_minutes"] = "N/D"
+        if row.get("next_expected_run_at") is None:
+            row["next_expected_run_at"] = "N/D"
+        if row.get("last_run_id") is None:
+            row["last_run_id"] = "N/D"
+        if row.get("last_run_status") is None:
+            row["last_run_status"] = "N/D"
+        if row.get("duration_seconds") is None:
+            row["duration_seconds"] = "N/D"
+        if row.get("signals_found") is None:
+            row["signals_found"] = "N/D"
+
+        cleaned.append(row)
+    return cleaned
 
 
 def signals(limit: int = 1000) -> list[dict[str, Any]]:
@@ -60,7 +89,16 @@ def latest_confluence(limit: int = 300) -> list[dict[str, Any]]:
 
 
 def runs(limit: int = 500) -> list[dict[str, Any]]:
-    return table_rows("engine_runs", columns="run_id,engine_id,market,strategy,trigger_source,requested_by,started_at,finished_at,status,duration_seconds,records_processed,signals_found,error_message,github_run_id", order="started_at", limit=limit)
+    rows = table_rows("engine_runs", columns="run_id,engine_id,market,strategy,trigger_source,requested_by,started_at,finished_at,status,duration_seconds,records_processed,signals_found,error_message,github_run_id", order="started_at", limit=limit)
+
+    # Old scheduler heartbeat rows without engine_id/run timestamps are not real
+    # engine executions. Keeping them in "Run recenti" only creates blank noise.
+    valid = []
+    for item in rows:
+        if not item.get("engine_id") or not item.get("run_id"):
+            continue
+        valid.append(item)
+    return valid
 
 
 def ai_analysis(limit: int = 500) -> list[dict[str, Any]]:
