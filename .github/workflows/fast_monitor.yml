@@ -7,11 +7,12 @@ on:
         description: Market
         required: true
         type: choice
-        options:
-          - usa
-          - italy
-          - both
+        options: [usa, italy, both]
         default: both
+      request_id:
+        description: Optional manual_run_requests UUID
+        required: false
+        type: string
   schedule:
     - cron: '*/5 7-21 * * 1-5'
 
@@ -27,21 +28,15 @@ jobs:
     name: Fast Monitor ITALY
     runs-on: ubuntu-latest
     if: >
-      github.event_name == 'schedule' ||
-      github.event.inputs.market == 'italy' ||
-      github.event.inputs.market == 'both'
+      github.event_name == 'schedule' || github.event.inputs.market == 'italy' || github.event.inputs.market == 'both'
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Restore shared CORE runtime data
-        uses: actions/cache@v4
+      - run: pip install -r requirements.txt
+      - uses: actions/cache@v4
         with:
           path: data
           key: v2-core-runtime-${{ runner.os }}-${{ github.run_id }}-italy
@@ -57,30 +52,24 @@ jobs:
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
           TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
           PORTFOLIO_POSITIONS_JSON: ${{ secrets.PORTFOLIO_POSITIONS_JSON }}
-        run: |
-          echo "FAST MONITOR - ITALY"
-          python -m monitor.fast_monitor --market italy
-          echo "ITALY Fast Monitor completed."
+          MANUAL_REQUEST_ID: ${{ inputs.request_id }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: python -m monitor.fast_monitor --market italy
 
   usa:
     name: Fast Monitor USA
     runs-on: ubuntu-latest
     if: >
-      github.event_name == 'schedule' ||
-      github.event.inputs.market == 'usa' ||
-      github.event.inputs.market == 'both'
+      github.event_name == 'schedule' || github.event.inputs.market == 'usa' || github.event.inputs.market == 'both'
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Restore shared CORE runtime data
-        uses: actions/cache@v4
+      - run: pip install -r requirements.txt
+      - uses: actions/cache@v4
         with:
           path: data
           key: v2-core-runtime-${{ runner.os }}-${{ github.run_id }}-usa
@@ -96,7 +85,7 @@ jobs:
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
           TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
           PORTFOLIO_POSITIONS_JSON: ${{ secrets.PORTFOLIO_POSITIONS_JSON }}
-        run: |
-          echo "FAST MONITOR - USA"
-          python -m monitor.fast_monitor --market usa
-          echo "USA Fast Monitor completed."
+          MANUAL_REQUEST_ID: ${{ inputs.request_id }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: python -m monitor.fast_monitor --market usa
