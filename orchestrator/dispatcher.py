@@ -15,8 +15,8 @@ TARGETS = {
     "CORE_ITALY": {"repo": "antoannali-ita/trading-engine-v2", "workflow": "master_scan.yml", "ref": "main", "inputs": {"market": "italy"}, "allowed_inputs": {"market", "request_id"}},
     "FAST_USA": {"repo": "antoannali-ita/trading-engine-v2", "workflow": "fast_monitor.yml", "ref": "main", "inputs": {"market": "usa"}, "allowed_inputs": {"market", "request_id"}},
     "FAST_ITALY": {"repo": "antoannali-ita/trading-engine-v2", "workflow": "fast_monitor.yml", "ref": "main", "inputs": {"market": "italy"}, "allowed_inputs": {"market", "request_id"}},
-    "MULTI_USA": {"repo": "antoannali-ita/trading-engine-multihorizon", "workflow": "multihorizon_scan.yml", "ref": "main", "inputs": {"market": "usa", "strategy": "all"}, "allowed_inputs": {"market", "strategy", "orchestrated", "send_email", "send_whatsapp", "request_id"}},
-    "MULTI_ITALY": {"repo": "antoannali-ita/trading-engine-multihorizon", "workflow": "multihorizon_scan.yml", "ref": "main", "inputs": {"market": "italy", "strategy": "all"}, "allowed_inputs": {"market", "strategy", "orchestrated", "send_email", "send_whatsapp", "request_id"}},
+    "MULTI_USA": {"repo": "antoannali-ita/trading-engine-multihorizon", "workflow": "multihorizon_scan.yml", "ref": "main", "inputs": {"market": "usa", "strategy": "all", "notifications": "false"}, "allowed_inputs": {"market", "strategy", "notifications", "request_id"}},
+    "MULTI_ITALY": {"repo": "antoannali-ita/trading-engine-multihorizon", "workflow": "multihorizon_scan.yml", "ref": "main", "inputs": {"market": "italy", "strategy": "all", "notifications": "false"}, "allowed_inputs": {"market", "strategy", "notifications", "request_id"}},
     "TRADINGAGENTS": {"repo": "antoannali-ita/TradingAgents", "workflow": "orchestrator_analysis.yml", "ref": "main", "inputs": {}, "allowed_inputs": {"ticker", "market", "analysis_id", "source_signal_id"}},
 }
 
@@ -68,9 +68,10 @@ def dispatch_pending_requests(limit: int = 20) -> dict[str, int]:
         payload = {**payload, "request_id": request_id}
         try:
             dispatch_workflow(engine_id, extra_inputs=payload)
-            db.table("manual_run_requests").update({"status": "DISPATCHED", "dispatched_at": utcnow()}).eq("request_id", request_id).execute()
+            # Do not overwrite RUNNING/SUCCESS if the dispatched job starts before this update lands.
+            db.table("manual_run_requests").update({"status": "DISPATCHED", "dispatched_at": utcnow()}).eq("request_id", request_id).eq("status", "REQUESTED").execute()
             dispatched += 1
         except Exception as exc:
-            db.table("manual_run_requests").update({"status": "FAILED", "completed_at": utcnow(), "error_message": f"{type(exc).__name__}: {exc}"[:4000]}).eq("request_id", request_id).execute()
+            db.table("manual_run_requests").update({"status": "FAILED", "completed_at": utcnow(), "error_message": f"{type(exc).__name__}: {exc}"[:4000]}).eq("request_id", request_id).eq("status", "REQUESTED").execute()
             failed += 1
     return {"dispatched": dispatched, "failed": failed}

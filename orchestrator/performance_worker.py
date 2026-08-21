@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pandas as pd
 import yfinance as yf
 
 from orchestrator.persistence import client
@@ -37,29 +38,65 @@ def _existing_keys(db, signal_id: str) -> set[str]:
     return {str(r.get("outcome") or "") for r in rows}
 
 
-def _window_stats(symbol: str, start: datetime, end: datetime, entry: float):
+def _series(hist: pd.DataFrame, field: str) -> pd.Series:
+    data = hist[field]
+    if isinstance(data, pd.DataFrame):
+        if data.shape[1] != 1:
+            raise ValueError(f"Unexpected multi-symbol history for {field}")
+        data = data.iloc[:, 0]
+    return pd.to_numeric(data, errors="coerce").dropna()
+
+
+def _future_history(symbol: str, detected: datetime, now: datetime) -> pd.DataFrame:
     hist = yf.download(
         symbol,
-        start=start.date().isoformat(),
-        end=(end + timedelta(days=2)).date().isoformat(),
+        start=detected.date().isoformat(),
+        end=(now + timedelta(days=2)).date().isoformat(),
         auto_adjust=True,
         progress=False,
     )
     if hist is None or hist.empty:
+        return pd.DataFrame()
+    idx = pd.to_datetime(hist.index)
+    # Performance starts from the first completed session after signal detection.
+    mask = idx.date > detected.date()
+    return hist.loc[mask].sort_index()
+
+
+def _window_stats(hist: pd.DataFrame, sessions: int, entry: float):
+    if hist is None or hist.empty:
         return None
-    close = hist["Close"].dropna()
-    high = hist["High"].dropna()
-    low = hist["Low"].dropna()
-    if close.empty:
+    close = _series(hist, "Close")
+    high = _series(hist, "High")
+    if len(close) < sessions:
         return None
-    exit_price = float(close.iloc[-1])
-    max_price = float(high.max()) if not high.empty else exit_price
-    min_price = float(low.min()) if not low.empty else exit_price
+
+    close_window = close.iloc[:sessions]
+    high_window = high.iloc[:sessions] if not high.empty else close_window
+    exit_price = float(close_window.iloc[-1])
+    max_price = float(high_window.max()) if not high_window.empty else exit_price
+
+    path = pd.Series([float(entry), *[float(v) for v in close_window.tolist()]], dtype="float64")
+    rolling_peak = path.cummax()
+    drawdowns = (path / rolling_peak - 1.0) * 100.0
+    max_drawdown = float(drawdowns.min())
+
+    end_value = close_window.index[-1]
+    if isinstance(end_value, pd.Timestamp):
+        period_end = end_value.to_pydatetime()
+    else:
+        period_end = pd.Timestamp(end_value).to_pydatetime()
+    if period_end.tzinfo is None:
+        period_end = period_end.replace(tzinfo=timezone.utc)
+    else:
+        period_end = period_end.astimezone(timezone.utc)
+
     return {
         "exit_price": exit_price,
         "pnl_pct": (exit_price / entry - 1.0) * 100.0,
         "mfe_pct": (max_price / entry - 1.0) * 100.0,
-        "mdd_pct": (min_price / entry - 1.0) * 100.0,
+        "mdd_pct": max_drawdown,
+        "period_end": period_end,
     }
 
 
@@ -102,17 +139,24 @@ def run() -> dict:
         existing = _existing_keys(db, signal_id)
         symbol = _yf_symbol(str(ticker), str(market))
 
-        for label, days in HORIZONS.items():
+        try:
+            hist = _future_history(symbol, detected, now)
+        except Exception as exc:
+            errors += 1
+            print(f"PERFORMANCE WARN {ticker}: {type(exc).__name__}: {exc}")
+            continue
+        if hist.empty:
+            continue
+
+        for label, sessions in HORIZONS.items():
             outcome = f"MARK_{label}"
             if outcome in existing:
                 continue
-            target = detected + timedelta(days=days)
-            if now < target:
-                continue
             try:
-                stats = _window_stats(symbol, detected, target, entry)
+                stats = _window_stats(hist, sessions, entry)
                 if not stats:
                     continue
+                period_end = stats["period_end"]
                 db.table("performance").insert({
                     "engine_id": row.get("engine_id") or row.get("engine") or "UNKNOWN",
                     "strategy": row.get("strategy"),
@@ -120,15 +164,21 @@ def run() -> dict:
                     "ticker": str(ticker).upper(),
                     "signal_id": signal_id,
                     "period_start": detected.isoformat(),
-                    "period_end": target.isoformat(),
+                    "period_end": period_end.isoformat(),
                     "outcome": outcome,
                     "entry_price": entry,
                     "exit_price": stats["exit_price"],
                     "pnl_pct": round(stats["pnl_pct"], 4),
                     "max_drawdown_pct": round(stats["mdd_pct"], 4),
                     "max_favorable_excursion_pct": round(stats["mfe_pct"], 4),
-                    "holding_minutes": int((target - detected).total_seconds() // 60),
-                    "metrics": {"source": "yfinance", "symbol": symbol, "horizon": label},
+                    "holding_minutes": max(0, int((period_end - detected).total_seconds() // 60)),
+                    "metrics": {
+                        "source": "yfinance",
+                        "symbol": symbol,
+                        "horizon": label,
+                        "horizon_basis": "trading_sessions",
+                        "max_drawdown_method": "close_peak_to_trough_from_entry",
+                    },
                 }).execute()
                 inserted += 1
             except Exception as exc:

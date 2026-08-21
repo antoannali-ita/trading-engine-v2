@@ -48,15 +48,25 @@ def _recent_base_activity(rows: list[dict], market: str, minutes: int = 30) -> b
     return False
 
 
+def _confluence_signal_id(item: dict) -> str:
+    source_ids = sorted(item.get("source_signal_ids") or [])
+    return stable_signal_id("CONFLUENCE", item["market"], item["ticker"], item["level"], *source_ids)
+
+
 def _ai_already_requested(ai_rows: list[dict], ticker: str, source_signal_id: str | None) -> bool:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
     for row in ai_rows:
         if str(row.get("ticker") or "").upper() != ticker.upper():
             continue
-        if source_signal_id and row.get("source_signal_id") == source_signal_id:
-            return True
+        status = str(row.get("status") or "").upper()
+        if status not in {"PENDING", "RUNNING", "SUCCESS"}:
+            continue
+        if source_signal_id:
+            if row.get("source_signal_id") == source_signal_id:
+                return True
+            continue
         ts = _parse_ts(row.get("started_at") or row.get("created_at"))
-        if ts and ts >= cutoff and str(row.get("status") or "").upper() in {"PENDING", "RUNNING", "SUCCESS"}:
+        if ts and ts >= cutoff and status in {"PENDING", "RUNNING"}:
             return True
     return False
 
@@ -81,7 +91,7 @@ def run_once() -> dict:
 
         for item in confluences:
             source_ids = sorted(item["source_signal_ids"])
-            confluence_id = stable_signal_id("CONFLUENCE", item["market"], item["ticker"], item["level"], *source_ids)
+            confluence_id = _confluence_signal_id(item)
             record_engine_signal(
                 run_id=run_id, engine_id="ORCHESTRATOR", engine="ORCHESTRATOR", strategy="CONFLUENCE",
                 market=item["market"], ticker=item["ticker"], signal_type=item["level"], decision=item["level"],
@@ -103,16 +113,27 @@ def run_once() -> dict:
         for item in confluences:
             if not item["eligible_for_ai"]:
                 continue
-            source_signal_id = item["source_signal_ids"][0] if item["source_signal_ids"] else None
-            if _ai_already_requested(ai_rows, item["ticker"], source_signal_id):
+            confluence_id = _confluence_signal_id(item)
+            if _ai_already_requested(ai_rows, item["ticker"], confluence_id):
                 continue
-            analysis_id = create_ai_pending(ticker=item["ticker"], market=item["market"], source_signal_id=source_signal_id, trigger_reason=f"{item['level']} | MULTI={item['multi_horizon_positive']}")
+            analysis_id = create_ai_pending(
+                ticker=item["ticker"],
+                market=item["market"],
+                source_signal_id=confluence_id,
+                trigger_reason=f"{item['level']} | MULTI={item['multi_horizon_positive']}",
+            )
             if not analysis_id:
                 continue
             try:
-                dispatch_workflow("TRADINGAGENTS", extra_inputs={"ticker": item["ticker"], "market": item["market"].lower(), "analysis_id": analysis_id, "source_signal_id": source_signal_id or ""})
-                tracker.event("AI_DISPATCH", f"TradingAgents dispatched for {item['ticker']}", details={"market": item["market"], "analysis_id": analysis_id})
+                dispatch_workflow("TRADINGAGENTS", extra_inputs={
+                    "ticker": item["ticker"],
+                    "market": item["market"].lower(),
+                    "analysis_id": analysis_id,
+                    "source_signal_id": confluence_id,
+                })
+                tracker.event("AI_DISPATCH", f"TradingAgents dispatched for {item['ticker']}", details={"market": item["market"], "analysis_id": analysis_id, "source_signal_id": confluence_id})
                 stats["ai_dispatched"] += 1
+                ai_rows.append({"ticker": item["ticker"], "source_signal_id": confluence_id, "status": "PENDING", "started_at": utcnow()})
             except Exception as exc:
                 db.table("ai_analysis").update({"status": "FAILED", "completed_at": utcnow(), "error_message": f"{type(exc).__name__}: {exc}"[:4000]}).eq("analysis_id", analysis_id).execute()
                 raise
