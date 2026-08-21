@@ -51,6 +51,8 @@ jobs:
             v2-fast-italy-${{ runner.os }}-
       - name: Run Fast Monitor ITALY
         env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
           TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
@@ -88,6 +90,8 @@ jobs:
             v2-fast-usa-${{ runner.os }}-
       - name: Run Fast Monitor USA
         env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
           TRADING_CAPITAL: ${{ vars.TRADING_CAPITAL || '35000' }}
