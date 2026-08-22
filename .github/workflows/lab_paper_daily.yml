@@ -1,9 +1,9 @@
-name: Strategy Lab Daily Opportunity Feed
+name: Strategy Lab Daily Opportunity Feed (legacy manual)
 
+# Legacy duplicate kept only for manual compatibility.
+# The scheduled Laboratory feed is owned by lab_paper_scheduler.yml.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "30 21 * * 1-5"
 
 permissions:
   contents: read
