@@ -2,9 +2,6 @@ name: Strategy Lab Daily Opportunity Feed
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - '.github/workflows/lab_paper_scheduler.yml'
   schedule:
     - cron: "30 21 * * 1-5"
 
