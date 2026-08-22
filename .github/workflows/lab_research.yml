@@ -30,8 +30,10 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
     steps:
-      - name: Checkout
+      - name: Checkout strategy lab branch
         uses: actions/checkout@v4
+        with:
+          ref: strategy-lab-v1
 
       - name: Python
         uses: actions/setup-python@v5
