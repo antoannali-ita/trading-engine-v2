@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: strategy-lab-daily-opportunity-feed
+  cancel-in-progress: false
+
 jobs:
   paper:
     runs-on: ubuntu-latest
