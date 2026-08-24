@@ -18,7 +18,6 @@ from lab.decision_engine import (
     data_quality_check,
     earnings_distance_days,
     net_rr,
-    portfolio_fit_v1,
     regime_v1,
     risk_based_qty,
     trade_eligibility,
@@ -26,12 +25,8 @@ from lab.decision_engine import (
 )
 from lab.indicators import enrich_prices
 from lab.market_data import MarketDataRequest, download_prices
-from lab.settings import (
-    ESTIMATED_SLIPPAGE_BPS,
-    MAX_NEW_BUYS,
-    MAX_POSITION_USD,
-    USA_COMMISSION_USD,
-)
+from lab.paper_policy import classify_paper_tier, lab_portfolio_fit
+from lab.settings import ESTIMATED_SLIPPAGE_BPS, MAX_POSITION_USD, USA_COMMISSION_USD
 from lab.strategies import STRATEGIES, generate_scores
 
 DEFAULT_SYMBOLS = [
@@ -137,6 +132,7 @@ def _open_position_if_needed(client, symbol: str, strategy: str, signal_date: st
         client.table("lab_paper_positions")
         .select("id,status")
         .eq("symbol", symbol)
+        .eq("strategy", strategy)
         .in_("status", ["OPEN", "TP1_HIT"])
         .limit(1)
         .execute()
@@ -169,8 +165,11 @@ def _open_position_if_needed(client, symbol: str, strategy: str, signal_date: st
             "event_type": "OPEN",
             "price": price,
             "new_stop": stop,
-            "note": "Paper position opened only after Lab data/trade/portfolio gates passed.",
-            "details": {"decision_model": "LAB_GATEKEEPER_V1"},
+            "note": f"Research paper position opened under tier {details.get('paper_tier') or 'N/D'}.",
+            "details": {
+                "decision_model": "LAB_GATEKEEPER_V2_RESEARCH",
+                "paper_tier": details.get("paper_tier"),
+            },
         }).execute()
     return True
 
@@ -200,7 +199,6 @@ def _update_existing_positions(client, symbol: str, last_bar, check_date: str) -
         tp2 = _safe(p.get("tp2"))
         status = str(p.get("status") or "OPEN")
 
-        # Conservative same-bar policy: stop has priority over targets.
         if stop is not None and low <= stop:
             gross = (stop - entry) * qty
             net = gross - float(p.get("commission_entry") or COMMISSION) - COMMISSION
@@ -253,22 +251,20 @@ def _update_existing_positions(client, symbol: str, last_bar, check_date: str) -
     return updated
 
 
-def _decision_state(strategy_score: float, trade_score_value: float, trigger: str, trade_gate: dict, portfolio_gate: dict, dq: dict, benchmark: bool) -> str:
+def _decision_state(strategy_score: float, trigger: str, paper_policy: dict, dq: dict, benchmark: bool) -> str:
     if benchmark:
         return "BENCHMARK"
     if dq.get("status") == "RED":
         return "BLOCKED_DATA"
-    if strategy_score < 65:
+    if strategy_score < 55:
         return "WATCH"
-    if strategy_score < 75:
+    if paper_policy.get("eligible"):
+        return "CONFIRMED"
+    if strategy_score < 65:
         return "NEAR_SETUP"
     if str(trigger).upper() != "CONFIRMED":
         return "PRE_BUY"
-    if not trade_gate.get("eligible") or trade_score_value < 75:
-        return "PRE_BUY"
-    if not portfolio_gate.get("eligible"):
-        return "CONFIRMED"
-    return "PAPER_OPEN"
+    return "PRE_BUY"
 
 
 def main() -> int:
@@ -277,9 +273,15 @@ def main() -> int:
         return 2
 
     client = get_supabase_client()
-    watch_threshold = float(os.getenv("LAB_WATCH_SCORE", "55"))
+    watch_threshold = float(os.getenv("LAB_WATCH_SCORE", "50"))
+    lab_max_position = float(os.getenv("LAB_MAX_POSITION_USD", "10000"))
+    max_new_buys = int(os.getenv("LAB_MAX_NEW_BUYS", "12"))
+    max_active = int(os.getenv("LAB_MAX_ACTIVE_POSITIONS", "80"))
+    max_per_strategy = int(os.getenv("LAB_MAX_ACTIVE_PER_STRATEGY", "24"))
+
     written = watch_written = opened = lifecycle_updates = 0
     now = datetime.now(timezone.utc)
+    candidates: list[dict] = []
 
     try:
         stale_before = (now - timedelta(days=3)).isoformat()
@@ -322,61 +324,92 @@ def main() -> int:
                 if atr is None or atr <= 0:
                     continue
 
-                entry, trigger, setup_note = _entry_and_trigger(strategy, last)
-                risk_per_share = 2.0 * atr
-                stop = price - risk_per_share
-                tp1 = price + 1.5 * risk_per_share
-                tp2 = price + 2.5 * risk_per_share
-                max_buy = entry + 0.8 * atr
-                distance_pct = ((price - entry) / entry * 100.0) if entry else None
+                ideal_entry, trigger, setup_note = _entry_and_trigger(strategy, last)
 
-                qty = risk_based_qty(entry=price, stop=stop)
-                capital = qty * price
-                loss_max = qty * max(price - stop, 0) + COMMISSION
-                rr_net_tp1 = net_rr(entry=price, stop=stop, target=tp1, qty=qty)
-                rr_net_tp2 = net_rr(entry=price, stop=stop, target=tp2, qty=qty)
+                # Research paper execution is deliberately at the observable market
+                # close. Keep ideal_entry separately for setup diagnostics. The old
+                # code mixed SMA/high20 ideal entry with a stop built from market
+                # price, which created false STOP_INVALID / BLOCKED_DATA records.
+                execution_entry = price
+                risk_per_share = 2.0 * atr
+                stop = execution_entry - risk_per_share
+                tp1 = execution_entry + 1.5 * risk_per_share
+                tp2 = execution_entry + 2.5 * risk_per_share
+                max_buy = ideal_entry + 0.8 * atr
+                distance_pct = ((price - ideal_entry) / ideal_entry * 100.0) if ideal_entry else None
+
+                qty = risk_based_qty(entry=execution_entry, stop=stop, max_position=lab_max_position)
+                if qty <= 0 and 0 < execution_entry <= lab_max_position:
+                    qty = 1
+                capital = qty * execution_entry
+                loss_max = qty * max(execution_entry - stop, 0) + COMMISSION
+                rr_net_tp1 = net_rr(entry=execution_entry, stop=stop, target=tp1, qty=qty)
+                rr_net_tp2 = net_rr(entry=execution_entry, stop=stop, target=tp2, qty=qty)
                 earnings_days = earnings_distance_days(catalyst.get("earnings_date"), signal_day)
 
                 dq = data_quality_check(
-                    price=price, entry=entry, max_buy=max_buy, stop=stop, tp1=tp1, tp2=tp2,
-                    atr=atr, sma50=_safe(last.sma50), sma200=_safe(last.sma200),
+                    price=price, entry=execution_entry, max_buy=max(max_buy, execution_entry),
+                    stop=stop, tp1=tp1, tp2=tp2, atr=atr,
+                    sma50=_safe(last.sma50), sma200=_safe(last.sma200),
                 )
                 trade_score_value = trade_score(
-                    strategy_score=strategy_score, price=price, entry=entry, max_buy=max_buy,
-                    atr=atr, rr_net=rr_net_tp2, trigger=trigger, earnings_days=earnings_days,
+                    strategy_score=strategy_score, price=price, entry=ideal_entry,
+                    max_buy=max_buy, atr=atr, rr_net=rr_net_tp2,
+                    trigger=trigger, earnings_days=earnings_days,
                 )
-                trade_gate = trade_eligibility(
+
+                # Keep the old strict gate for diagnosis. It no longer decides alone
+                # whether a research paper trade may be opened.
+                strict_trade_gate = trade_eligibility(
                     data_quality=dq, trigger=trigger, price=price, max_buy=max_buy,
                     rr_net=rr_net_tp2, earnings_days=earnings_days, event_driven=False,
                 )
-                portfolio_gate = portfolio_fit_v1(
-                    symbol=symbol, open_positions=open_positions,
-                    opened_this_run=opened, max_new_buys=MAX_NEW_BUYS,
+                paper_policy = classify_paper_tier(
+                    strategy_score=strategy_score,
+                    trade_score=trade_score_value,
+                    trigger=trigger,
+                    data_quality=dq,
+                    rr_net=rr_net_tp2,
+                    price=price,
+                    max_buy=max_buy,
+                    atr=atr,
+                    earnings_days=earnings_days,
+                    qty=qty,
+                )
+                preliminary_portfolio = lab_portfolio_fit(
+                    symbol=symbol, strategy=strategy, open_positions=open_positions,
+                    opened_this_run=0, max_new_buys=max_new_buys,
+                    max_active_positions=max_active,
+                    max_active_per_strategy=max_per_strategy,
                 )
                 state = _decision_state(
-                    strategy_score, trade_score_value, trigger, trade_gate,
-                    portfolio_gate, dq, symbol in BENCHMARK_ETFS,
+                    strategy_score, trigger, paper_policy, dq, symbol in BENCHMARK_ETFS,
                 )
 
                 details = {
                     "generated_at": now.isoformat(),
-                    "decision_model": "LAB_GATEKEEPER_V1",
+                    "decision_model": "LAB_GATEKEEPER_V2_RESEARCH",
                     "strategy_score": strategy_score,
                     "trade_score": trade_score_value,
-                    "portfolio_fit_score": portfolio_gate.get("score"),
+                    "paper_tier": paper_policy.get("tier"),
+                    "paper_policy": paper_policy,
+                    "strict_trade_eligibility": strict_trade_gate,
+                    "trade_eligibility": strict_trade_gate,
+                    "portfolio_eligibility": preliminary_portfolio,
                     "data_quality": dq,
-                    "trade_eligibility": trade_gate,
-                    "portfolio_eligibility": portfolio_gate,
                     "market_regime": market_regime,
                     "trigger": trigger,
                     "setup_note": setup_note,
+                    "ideal_entry": ideal_entry,
+                    "execution_entry": execution_entry,
                     "distance_to_entry_pct": distance_pct,
                     "max_buy": max_buy,
                     "tp1": tp1,
                     "qty": qty,
                     "capital": capital,
                     "loss_max": loss_max,
-                    "max_position_policy": MAX_POSITION_USD,
+                    "max_position_policy": lab_max_position,
+                    "legacy_max_position_policy": MAX_POSITION_USD,
                     "commission_per_side": COMMISSION,
                     "estimated_slippage_bps": ESTIMATED_SLIPPAGE_BPS,
                     "execution_cost_model": "ESTIMATED_COMMISSION_PLUS_SLIPPAGE",
@@ -390,41 +423,104 @@ def main() -> int:
                     "relative_volume": _safe(last.relative_volume),
                     "earnings_date": catalyst.get("earnings_date"),
                     "days_to_earnings": earnings_days,
-                    "earnings_gate_bypassed": trade_gate.get("earnings_bypass", False),
                     "news": catalyst.get("news", []),
                     "catalyst_quality": catalyst.get("catalyst_quality"),
-                    "warning": "News are aggregator enrichment only; verify primary sources before any real trade.",
+                    "warning": "Research-only paper execution. News enrichment must be verified before any real trade.",
                 }
                 payload = {
                     "symbol": symbol, "strategy": strategy, "signal_date": signal_date,
-                    "score": strategy_score, "price": price, "proposed_entry": entry,
-                    "proposed_stop": stop, "proposed_target": tp2, "status": state,
-                    "details": details,
+                    "score": strategy_score, "price": price,
+                    "proposed_entry": execution_entry, "proposed_stop": stop,
+                    "proposed_target": tp2, "status": state, "details": details,
                 }
-                client.table("lab_paper_signals").upsert(payload, on_conflict="symbol,strategy,signal_date").execute()
+                client.table("lab_paper_signals").upsert(
+                    payload, on_conflict="symbol,strategy,signal_date"
+                ).execute()
                 written += 1
 
-                alert_type, alert_price = _alert_type(state, trigger, price, entry, max_buy)
+                alert_type, alert_price = _alert_type(state, trigger, price, execution_entry, max_buy)
                 _upsert_watchlist(client, {
                     "symbol": symbol, "strategy": strategy, "market": "USA", "status": state,
-                    "score": strategy_score, "price": price, "entry": entry, "max_buy": max_buy,
-                    "stop": stop, "tp1": tp1, "tp2": tp2, "trigger": trigger,
-                    "alert_type": alert_type, "alert_price": alert_price,
+                    "score": strategy_score, "price": price, "entry": execution_entry,
+                    "max_buy": max_buy, "stop": stop, "tp1": tp1, "tp2": tp2,
+                    "trigger": trigger, "alert_type": alert_type, "alert_price": alert_price,
                     "distance_to_entry_pct": distance_pct, "reason": setup_note,
                     "signal_date": signal_date, "last_seen_at": now.isoformat(), "active": True,
                     "details": details,
                 })
                 watch_written += 1
 
-                if state == "PAPER_OPEN":
-                    if _open_position_if_needed(client, symbol, strategy, signal_date, price, stop, tp1, tp2, qty, details):
-                        opened += 1
-                        open_positions.append({"symbol": symbol, "strategy": strategy, "status": "OPEN"})
+                if paper_policy.get("eligible") and symbol not in BENCHMARK_ETFS:
+                    candidates.append({
+                        "symbol": symbol,
+                        "strategy": strategy,
+                        "signal_date": signal_date,
+                        "price": execution_entry,
+                        "stop": stop,
+                        "tp1": tp1,
+                        "tp2": tp2,
+                        "qty": qty,
+                        "tier": paper_policy.get("tier"),
+                        "strategy_score": strategy_score,
+                        "trade_score": trade_score_value,
+                        "details": details,
+                    })
         except Exception as exc:
             print(f"{symbol}: {exc}")
 
+    # Rank after the full scan so paper capacity is not consumed simply by the
+    # alphabetical order of LAB_SYMBOLS. A first, then B/C, then score quality.
+    tier_rank = {"A": 0, "B": 1, "C": 2}
+    candidates.sort(key=lambda r: (
+        tier_rank.get(str(r.get("tier") or ""), 9),
+        -float(r.get("strategy_score") or 0),
+        -float(r.get("trade_score") or 0),
+    ))
+
+    for candidate in candidates:
+        if opened >= max_new_buys:
+            break
+        portfolio_gate = lab_portfolio_fit(
+            symbol=candidate["symbol"], strategy=candidate["strategy"],
+            open_positions=open_positions, opened_this_run=opened,
+            max_new_buys=max_new_buys, max_active_positions=max_active,
+            max_active_per_strategy=max_per_strategy,
+        )
+        if not portfolio_gate.get("eligible"):
+            continue
+
+        details = dict(candidate["details"])
+        details["portfolio_eligibility"] = portfolio_gate
+        if _open_position_if_needed(
+            client, candidate["symbol"], candidate["strategy"], candidate["signal_date"],
+            candidate["price"], candidate["stop"], candidate["tp1"], candidate["tp2"],
+            candidate["qty"], details,
+        ):
+            opened += 1
+            open_positions.append({
+                "symbol": candidate["symbol"], "strategy": candidate["strategy"], "status": "OPEN"
+            })
+            client.table("lab_paper_signals").update({
+                "status": "PAPER_OPEN", "details": details,
+            }).eq("symbol", candidate["symbol"]).eq("strategy", candidate["strategy"]).eq(
+                "signal_date", candidate["signal_date"]
+            ).execute()
+            _upsert_watchlist(client, {
+                "symbol": candidate["symbol"], "strategy": candidate["strategy"],
+                "market": "USA", "status": "PAPER_OPEN",
+                "score": candidate["strategy_score"], "price": candidate["price"],
+                "entry": candidate["price"], "stop": candidate["stop"],
+                "tp1": candidate["tp1"], "tp2": candidate["tp2"],
+                "trigger": details.get("trigger"), "alert_type": "PAPER_OPEN",
+                "alert_price": candidate["price"], "signal_date": candidate["signal_date"],
+                "last_seen_at": now.isoformat(), "active": True,
+                "reason": details.get("setup_note"), "max_buy": details.get("max_buy"),
+                "distance_to_entry_pct": details.get("distance_to_entry_pct"),
+                "details": details,
+            })
+
     print(
-        f"opportunity rows={written} watchlist={watch_written} "
+        f"opportunity rows={written} watchlist={watch_written} candidates={len(candidates)} "
         f"paper_opened={opened} lifecycle_updates={lifecycle_updates} "
         f"regime={market_regime.get('state', 'UNKNOWN')}"
     )
