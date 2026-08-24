@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 import pandas as pd
@@ -31,99 +31,82 @@ def require_access() -> None:
     st.stop()
 
 
-def parse_json(value: Any, default: Any) -> Any:
-    if isinstance(value, (dict, list)):
+def j(value: Any) -> dict:
+    if isinstance(value, dict):
         return value
-    if value in (None, ""):
-        return default
     try:
-        return json.loads(str(value))
+        return json.loads(str(value)) if value else {}
     except Exception:
-        return default
+        return {}
 
 
-def signal_session(row: dict[str, Any]) -> str | None:
-    value = row.get("signal_date") or row.get("created_at")
+def session_of(row: dict[str, Any]) -> str | None:
+    value = row.get("signal_date") or row.get("source_signal_date") or row.get("created_at") or row.get("opened_at")
     return str(value)[:10] if value else None
 
 
-def position_session(row: dict[str, Any]) -> str | None:
-    value = row.get("source_signal_date") or row.get("opened_at") or row.get("created_at")
-    return str(value)[:10] if value else None
+def tier_of(row: dict[str, Any]) -> str | None:
+    d = j(row.get("details"))
+    policy = j(d.get("paper_policy"))
+    value = d.get("paper_tier") or policy.get("tier")
+    return str(value) if value else None
 
 
-def paper_failed_gates(row: dict[str, Any]) -> list[str]:
-    details = parse_json(row.get("details"), {})
-    failed: list[str] = []
-    if isinstance(details, dict):
-        policy = details.get("paper_policy") or {}
-        if isinstance(policy, dict):
-            failed.extend(str(x) for x in (policy.get("hard_failed") or []))
-    if str(row.get("status") or "").upper() == "BLOCKED_DATA" and not failed:
-        failed.append("BLOCKED_DATA")
-    return sorted(set(failed))
+def gate_rows(signal: dict[str, Any]) -> list[dict[str, str]]:
+    d = j(signal.get("details"))
+    policy = j(d.get("paper_policy"))
+    out: list[dict[str, str]] = []
 
+    for gate in policy.get("data_gate_failures", []) or []:
+        out.append({"family": "DATA", "policy": "PAPER_POLICY", "tier": "ALL", "gate": str(gate)})
+    for gate in policy.get("policy_hard_failures", []) or []:
+        out.append({"family": "POLICY", "policy": "PAPER_POLICY", "tier": "ALL", "gate": str(gate)})
 
-def strict_failed_gates(row: dict[str, Any]) -> list[str]:
-    details = parse_json(row.get("details"), {})
-    failed: list[str] = []
-    if isinstance(details, dict):
-        trade = details.get("strict_trade_eligibility") or details.get("trade_eligibility") or {}
-        if isinstance(trade, dict):
-            failed.extend(str(x) for x in (trade.get("failed") or []))
-        quality = details.get("data_quality") or {}
-        if isinstance(quality, dict) and quality.get("blocked"):
-            failed.append("DATA_QUALITY_RED")
-    return sorted(set(failed))
+    checks = policy.get("tier_checks") or {}
+    if isinstance(checks, dict):
+        for tier, check in checks.items():
+            if not isinstance(check, dict):
+                continue
+            for gate in check.get("failed", []) or []:
+                family = "DATA" if str(gate).startswith("DATA_") else "POLICY"
+                out.append({"family": family, "policy": "PAPER_POLICY", "tier": str(tier), "gate": str(gate)})
 
-
-def ratio(num: int, den: int) -> float:
-    return num / den * 100.0 if den else 0.0
-
-
-def fmt_delta(current: float, previous: float) -> str:
-    if previous == 0:
-        return "n/a" if current == 0 else f"+{current:.2f}"
-    change = (current - previous) / abs(previous) * 100.0
-    return f"{change:+.1f}%"
-
-
-def paper_tier(row: dict[str, Any]) -> str:
-    details = parse_json(row.get("details"), {})
-    if isinstance(details, dict) and details.get("paper_tier"):
-        return str(details.get("paper_tier"))
-    return "-"
+    strict = j(d.get("strict_trade_eligibility") or d.get("trade_eligibility"))
+    for gate in strict.get("failed", []) or []:
+        family = "DATA" if "DATA" in str(gate) else "POLICY"
+        out.append({"family": family, "policy": "LEGACY_STRICT", "tier": "LEGACY", "gate": str(gate)})
+    return out
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_data():
     return {
-        "signals": data_access.lab_paper_signals(5000),
-        "positions": data_access.lab_paper_positions(5000),
-        "outcomes": data_access.lab_signal_outcomes(10000),
-        "backtests": data_access.lab_backtest_results(10000),
+        "signals": data_access.lab_paper_signals(10000),
+        "positions": data_access.lab_paper_positions(10000),
+        "outcomes": data_access.lab_signal_outcomes(20000),
     }
 
 
 require_access()
 st.title("🧪 Laboratory Control")
-st.caption("Diagnostica del Laboratory per sessione di mercato: segnali, paper trade, tier A/B/C, colli di bottiglia e confronto tra strategie. Nessun ordine reale viene generato da questa pagina.")
+st.caption("Controllo del throughput sperimentale. Production resta separata e nessun elemento di questa pagina genera ordini reali.")
 
 with st.sidebar:
-    st.markdown("### Come leggere questa pagina")
+    st.markdown("### Guida della pagina")
     st.markdown("""
-**Obiettivo:** capire se il Laboratory sta realmente facendo esperimenti, non solo producendo segnali.
+**Domanda:** il Laboratory sta lavorando e dove si blocca?
 
-**Controlla nell'ordine:**
-1. Ultima sessione analizzata
-2. Segnali e Paper Open
-3. Conversione segnale → paper
-4. Tier A/B/C
-5. Gate PAPER_POLICY che bloccano davvero
-6. Gate LEGACY_STRICT che in produzione sarebbero più severi
-7. Strategie UNDERTESTED / BOTTLENECK / REVIEW
+**Funnel:** universo → segnali → Tier A/B/C → paper open.
 
-Il confronto è tra **sessioni completate**, non tra 48 ore di calendario. Weekend e festività quindi non fanno sembrare fermo un sistema che correttamente non aveva mercato da analizzare.
+- **A:** baseline quasi-production.
+- **B:** esperimento con gate rilassati.
+- **C:** 🔬 **RESEARCH ONLY · NON OPERATIVO**.
+- **RED data quality:** veto.
+- **YELLOW:** può entrare solo B/C, mai A.
+
+I gate **DATA** indicano problemi/limiti dei dati. I gate **POLICY** sono scelte strategiche. Non vanno confusi.
+
+`LEGACY_STRICT` è solo un confronto diagnostico: non rappresenta "alpha perso" e non osserva l'intero universo senza filtri.
 """)
 
 try:
@@ -135,153 +118,94 @@ except Exception as exc:
 signals = data["signals"]
 positions = data["positions"]
 outcomes = data["outcomes"]
-backtests = data["backtests"]
 
-sessions = sorted({d for d in (signal_session(r) for r in signals) if d})
-latest_session = sessions[-1] if sessions else None
-previous_session = sessions[-2] if len(sessions) >= 2 else None
-cur = [r for r in signals if signal_session(r) == latest_session] if latest_session else []
-prev = [r for r in signals if signal_session(r) == previous_session] if previous_session else []
-cur_pos = [r for r in positions if position_session(r) == latest_session] if latest_session else []
-prev_pos = [r for r in positions if position_session(r) == previous_session] if previous_session else []
+sessions = sorted({x for x in (session_of(r) for r in signals) if x})
+latest = sessions[-1] if sessions else None
+previous = sessions[-2] if len(sessions) > 1 else None
+cur = [r for r in signals if session_of(r) == latest] if latest else []
+prev = [r for r in signals if session_of(r) == previous] if previous else []
+cur_pos = [p for p in positions if session_of(p) == latest] if latest else []
+prev_pos = [p for p in positions if session_of(p) == previous] if previous else []
 
-cur_status = Counter(str(x.get("status") or "N/D").upper() for x in cur)
-prev_status = Counter(str(x.get("status") or "N/D").upper() for x in prev)
-cur_tiers = Counter(paper_tier(x) for x in cur if paper_tier(x) != "-")
-prev_tiers = Counter(paper_tier(x) for x in prev if paper_tier(x) != "-")
-cur_conv = ratio(len(cur_pos), len(cur))
-prev_conv = ratio(len(prev_pos), len(prev))
+cur_status = Counter(str(r.get("status") or "N/D").upper() for r in cur)
+cur_tier = Counter(tier_of(r) for r in cur if tier_of(r))
+prev_tier = Counter(tier_of(r) for r in prev if tier_of(r))
+conversion = 100 * len(cur_pos) / len(cur) if cur else 0.0
+prev_conversion = 100 * len(prev_pos) / len(prev) if prev else 0.0
 
-st.info(f"Ultima sessione disponibile: **{latest_session or 'N/D'}** · precedente: **{previous_session or 'N/D'}**")
-m1, m2, m3, m4, m5, m6 = st.columns(6)
-m1.metric("Segnali sessione", len(cur), fmt_delta(len(cur), len(prev)))
-m2.metric("CONFIRMED", cur_status.get("CONFIRMED", 0), fmt_delta(cur_status.get("CONFIRMED", 0), prev_status.get("CONFIRMED", 0)))
-m3.metric("Paper Open", len(cur_pos), fmt_delta(len(cur_pos), len(prev_pos)))
-m4.metric("Conversione", f"{cur_conv:.2f}%", f"{cur_conv-prev_conv:+.2f} pp")
-m5.metric("Tier A/B/C", f"{cur_tiers.get('A',0)}/{cur_tiers.get('B',0)}/{cur_tiers.get('C',0)}")
-m6.metric("BLOCKED_DATA", cur_status.get("BLOCKED_DATA", 0), fmt_delta(cur_status.get("BLOCKED_DATA", 0), prev_status.get("BLOCKED_DATA", 0)))
+st.info(f"Ultima sessione: **{latest or 'N/D'}** · precedente: **{previous or 'N/D'}**")
+cols = st.columns(7)
+cols[0].metric("Segnali", len(cur), len(cur) - len(prev))
+cols[1].metric("Tier A", cur_tier.get("A", 0), cur_tier.get("A", 0) - prev_tier.get("A", 0))
+cols[2].metric("Tier B", cur_tier.get("B", 0), cur_tier.get("B", 0) - prev_tier.get("B", 0))
+cols[3].metric("Tier C 🔬", cur_tier.get("C", 0), cur_tier.get("C", 0) - prev_tier.get("C", 0))
+cols[4].metric("Paper Open", len(cur_pos), len(cur_pos) - len(prev_pos))
+cols[5].metric("Conversione", f"{conversion:.1f}%", f"{conversion-prev_conversion:+.1f} pp")
+cols[6].metric("BLOCKED_DATA", cur_status.get("BLOCKED_DATA", 0))
 
-if len(cur) >= 10 and cur_conv < 5:
-    st.error("🔴 Collo di bottiglia: conversione in paper trade sotto il 5% nell'ultima sessione.")
-elif not cur:
-    st.warning("🟠 Nessuna sessione Laboratory disponibile.")
-else:
-    st.success("🟢 Attività Laboratory presente. Il dettaglio sotto mostra dove si perde conversione.")
+if cur_tier.get("C", 0):
+    st.warning("🔬 I Tier C sono controfattuali di ricerca. NON sono segnali operativi né candidati diretti a ordini reali.")
 
-strategies = sorted({str(r.get("strategy") or "") for r in signals if r.get("strategy")})
-backtest_map: dict[str, list[dict[str, Any]]] = defaultdict(list)
-for row in backtests:
-    backtest_map[str(row.get("strategy") or "")].append(row)
-outcome_map: dict[str, list[dict[str, Any]]] = defaultdict(list)
-for row in outcomes:
-    outcome_map[str(row.get("strategy") or "")].append(row)
-
+st.subheader("Funnel per strategia")
+strategies = sorted({str(r.get("strategy")) for r in signals if r.get("strategy")})
 summary = []
-gates: Counter[tuple[str, str, str]] = Counter()
 for strategy in strategies:
-    rs = [r for r in cur if str(r.get("strategy") or "") == strategy]
-    all_r = [r for r in signals if str(r.get("strategy") or "") == strategy]
-    ps = [r for r in cur_pos if str(r.get("strategy") or "") == strategy]
-    all_p = [r for r in positions if str(r.get("strategy") or "") == strategy]
+    rs = [r for r in cur if str(r.get("strategy")) == strategy]
+    ps = [p for p in cur_pos if str(p.get("strategy")) == strategy]
+    tiers = Counter(tier_of(r) for r in rs if tier_of(r))
     stats = Counter(str(r.get("status") or "N/D").upper() for r in rs)
-    tiers = Counter(paper_tier(r) for r in rs if paper_tier(r) != "-")
-    for row in rs:
-        for gate in paper_failed_gates(row):
-            gates[(strategy, "PAPER_POLICY", gate)] += 1
-        for gate in strict_failed_gates(row):
-            gates[(strategy, "LEGACY_STRICT", gate)] += 1
-
-    bt = backtest_map.get(strategy, [])
-    pf = [float(r["profit_factor"]) for r in bt if r.get("profit_factor") not in (None, "")]
-    avgr = [float(r["avg_return_pct"]) for r in bt if r.get("avg_return_pct") not in (None, "")]
-    avg_pf = sum(pf) / len(pf) if pf else None
-    avg_ret = sum(avgr) / len(avgr) if avgr else None
-
-    outs = outcome_map.get(strategy, [])
-    d1 = [float(r["ret_d1"]) for r in outs if r.get("ret_d1") not in (None, "")]
-    avg_d1 = sum(d1) / len(d1) if d1 else None
-
-    session_conv = ratio(len(ps), len(rs))
-    lifetime_conv = ratio(len(all_p), len(all_r))
-    blocked_ratio = stats.get("BLOCKED_DATA", 0) / len(rs) if rs else 0.0
-    if len(all_p) < 10:
-        lab_status = "UNDERTESTED"
-    elif blocked_ratio >= 0.30:
-        lab_status = "REVIEW"
-    elif len(all_r) >= 20 and lifetime_conv < 5:
-        lab_status = "BOTTLENECK"
-    elif avg_pf is not None and avg_pf >= 1.40 and (avg_ret or 0) > 0:
-        lab_status = "PROMISING"
-    else:
-        lab_status = "ACTIVE"
-
     summary.append({
         "strategy": strategy,
-        "signals_session": len(rs),
-        "PRE_BUY": stats.get("PRE_BUY", 0),
-        "NEAR_SETUP": stats.get("NEAR_SETUP", 0),
-        "CONFIRMED": stats.get("CONFIRMED", 0),
-        "BLOCKED_DATA": stats.get("BLOCKED_DATA", 0),
+        "signals": len(rs),
         "tier_A": tiers.get("A", 0),
         "tier_B": tiers.get("B", 0),
-        "tier_C": tiers.get("C", 0),
-        "paper_open_session": len(ps),
-        "conversion_session_pct": round(session_conv, 2),
-        "paper_open_lifetime": len(all_p),
-        "conversion_lifetime_pct": round(lifetime_conv, 2),
-        "backtest_avg_pf": round(avg_pf, 3) if avg_pf is not None else None,
-        "backtest_avg_return_pct": round(avg_ret, 3) if avg_ret is not None else None,
-        "forward_d1_n": len(d1),
-        "forward_avg_d1_pct": round(avg_d1, 3) if avg_d1 is not None else None,
-        "lab_status": lab_status,
+        "tier_C_research_only": tiers.get("C", 0),
+        "paper_open": len(ps),
+        "conversion_pct": round(100 * len(ps) / len(rs), 2) if rs else 0.0,
+        "blocked_data": stats.get("BLOCKED_DATA", 0),
     })
-
-st.subheader("Strategie")
 st.dataframe(pd.DataFrame(summary), width="stretch", hide_index=True)
 
-st.subheader("Perché non stiamo comprando in paper?")
-gate_rows = [
-    {"strategy": s, "policy_type": p, "gate": g, "blocked_session": n}
-    for (s, p, g), n in gates.most_common()
+st.subheader("Gate Analysis: DATA vs POLICY, A/B/C vs LEGACY")
+counter: Counter[tuple[str, str, str, str]] = Counter()
+for row in cur:
+    strategy = str(row.get("strategy") or "N/D")
+    for item in gate_rows(row):
+        counter[(strategy, item["family"], item["policy"], item["tier"], item["gate"])] += 1
+
+gates = [
+    {"strategy": k[0], "family": k[1], "policy": k[2], "tier": k[3], "gate": k[4], "count": n}
+    for k, n in counter.most_common()
 ]
-if gate_rows:
-    gate_df = pd.DataFrame(gate_rows)
-    st.dataframe(gate_df, width="stretch", hide_index=True)
-    paper_only = gate_df[gate_df["policy_type"] == "PAPER_POLICY"]
-    if not paper_only.empty:
-        total_gates = paper_only.groupby("gate", as_index=False)["blocked_session"].sum().sort_values("blocked_session", ascending=False)
-        st.markdown("#### Gate che bloccano davvero il paper V2")
-        st.bar_chart(total_gates.set_index("gate"))
-    st.caption("LEGACY_STRICT mostra cosa avrebbe bloccato la vecchia logica severa; PAPER_POLICY indica invece i veto effettivi del nuovo Laboratory.")
+if gates:
+    gate_df = pd.DataFrame(gates)
+    family_filter = st.segmented_control("Famiglia", ["TUTTI", "DATA", "POLICY"], default="TUTTI")
+    shown = gate_df if family_filter == "TUTTI" else gate_df[gate_df["family"] == family_filter]
+    st.dataframe(shown, width="stretch", hide_index=True)
 else:
-    st.info("Nessun gate registrato nei dettagli dei segnali dell'ultima sessione.")
+    st.info("Nessun gate dettagliato disponibile per l'ultima sessione. I nuovi campi compariranno dopo il primo run V2.1.")
 
-st.subheader("Confronto ultima sessione vs precedente")
-comparison = pd.DataFrame([
+st.subheader("Shadow outcomes")
+obs = Counter()
+for row in outcomes:
+    d = j(row.get("details"))
+    group = d.get("observation_group")
+    if group:
+        obs[str(group)] += 1
+if obs:
+    st.dataframe(pd.DataFrame([{"gruppo": k, "osservazioni": v} for k, v in obs.items()]), width="stretch", hide_index=True)
+    st.caption("REJECTED_C_VALID_DATA viene seguito come shadow outcome. DATA_REJECT resta fuori dalle statistiche di performance.")
+else:
+    st.info("La classificazione shadow sarà popolata dal prossimo run degli outcome V2.1.")
+
+st.subheader("Confronto sessione")
+st.dataframe(pd.DataFrame([
     {"metrica": "Segnali", "ultima": len(cur), "precedente": len(prev)},
-    {"metrica": "PRE_BUY", "ultima": cur_status.get("PRE_BUY", 0), "precedente": prev_status.get("PRE_BUY", 0)},
-    {"metrica": "NEAR_SETUP", "ultima": cur_status.get("NEAR_SETUP", 0), "precedente": prev_status.get("NEAR_SETUP", 0)},
-    {"metrica": "CONFIRMED", "ultima": cur_status.get("CONFIRMED", 0), "precedente": prev_status.get("CONFIRMED", 0)},
-    {"metrica": "BLOCKED_DATA", "ultima": cur_status.get("BLOCKED_DATA", 0), "precedente": prev_status.get("BLOCKED_DATA", 0)},
-    {"metrica": "Tier A", "ultima": cur_tiers.get("A", 0), "precedente": prev_tiers.get("A", 0)},
-    {"metrica": "Tier B", "ultima": cur_tiers.get("B", 0), "precedente": prev_tiers.get("B", 0)},
-    {"metrica": "Tier C", "ultima": cur_tiers.get("C", 0), "precedente": prev_tiers.get("C", 0)},
+    {"metrica": "Tier A", "ultima": cur_tier.get("A",0), "precedente": prev_tier.get("A",0)},
+    {"metrica": "Tier B", "ultima": cur_tier.get("B",0), "precedente": prev_tier.get("B",0)},
+    {"metrica": "Tier C", "ultima": cur_tier.get("C",0), "precedente": prev_tier.get("C",0)},
     {"metrica": "Paper Open", "ultima": len(cur_pos), "precedente": len(prev_pos)},
-    {"metrica": "Conversione %", "ultima": round(cur_conv, 2), "precedente": round(prev_conv, 2)},
-])
-st.dataframe(comparison, width="stretch", hide_index=True)
-
-st.subheader("Ultimi paper trade")
-if positions:
-    enriched = []
-    for row in positions:
-        item = dict(row)
-        item["paper_tier"] = paper_tier(row)
-        enriched.append(item)
-    p = pd.DataFrame(enriched)
-    cols = [c for c in ["opened_at", "symbol", "strategy", "paper_tier", "status", "entry_price", "last_price", "stop_current", "tp1", "tp2", "return_pct", "exit_reason"] if c in p.columns]
-    st.dataframe(p[cols].head(100), width="stretch", hide_index=True)
-else:
-    st.info("Nessuna paper position registrata.")
+    {"metrica": "Conversione %", "ultima": round(conversion,2), "precedente": round(prev_conversion,2)},
+]), width="stretch", hide_index=True)
 
 st.caption(f"Aggiornato: {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S %Z')}")
