@@ -173,7 +173,7 @@ if fx_positions:
             "Esito": _status_label(pnl_eur),
             "Target EUR/USD": target,
         })
-    fx_df = pd.DataFrame(fx_rows).round(4)
+    fx_df = pd.DataFrame(fx_rows).round(2)
     fx_styled = fx_df.style.map(_pnl_color, subset=["P&L €", "P&L %"])
     st.dataframe(fx_styled, width="stretch", hide_index=True)
 
@@ -184,6 +184,7 @@ with st.sidebar:
         **Questa pagina mostra capitale reale.**\n\n
         - 🟢 verde = posizione in guadagno.\n
         - 🔴 rosso = posizione in perdita.\n
+        - Tutti i valori monetari, percentuali e di cambio sono mostrati con massimo **2 decimali**.\n
         - `Qty` è la quantità residua effettivamente ancora in portafoglio.\n
         - Vendite parziali riducono `Qty`; la posizione resta OPEN finché Qty > 0.\n
         - `LIVE` indica prezzo recuperato dal mercato; `SNAPSHOT` è solo fallback.\n
