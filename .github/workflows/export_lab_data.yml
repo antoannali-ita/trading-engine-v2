@@ -1,0 +1,42 @@
+name: Export Laboratory Data
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Export Supabase Laboratory tables
+        run: python scripts/export_lab_data.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+
+      - name: Show export manifest
+        if: always()
+        run: |
+          find artifacts -name manifest.json -print -exec cat {} \; || true
+
+      - name: Upload Laboratory export
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: laboratory-data-export
+          path: |
+            artifacts/lab_export_*.zip
+            artifacts/lab_export_*/manifest.json
+          if-no-files-found: error
+          retention-days: 14
