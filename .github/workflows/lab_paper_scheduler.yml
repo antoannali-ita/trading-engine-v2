@@ -52,6 +52,13 @@ jobs:
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: python jobs/run_paper_signals.py
 
+      - name: Enrich V2 metadata, risk identity and Fineco cost scenarios
+        working-directory: laboratory
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python jobs/enrich_lab_metadata.py
+
       - name: Update signal outcomes D1-D60 MFE MAE
         working-directory: laboratory
         env:
