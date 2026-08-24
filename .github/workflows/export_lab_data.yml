@@ -2,6 +2,10 @@ name: Export Laboratory Data
 
 on:
   workflow_dispatch:
+  schedule:
+    # Laboratory audit 3x/week. 18:30 UTC = 20:30 Italy in summer, 19:30 in winter.
+    # Mon/Wed/Fri gives a regular 2-3 day cadence without month-boundary quirks.
+    - cron: '30 18 * * 1,3,5'
 
 permissions:
   contents: read
@@ -25,12 +29,19 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
 
-      - name: Show export manifest
+      - name: Build Laboratory 48h health report
+        run: python scripts/lab_health_report.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+
+      - name: Show export manifest and health report
         if: always()
         run: |
           find artifacts -name manifest.json -print -exec cat {} \; || true
+          find artifacts -name LAB_HEALTH_REPORT.md -print -exec cat {} \; || true
 
-      - name: Upload Laboratory export
+      - name: Upload Laboratory audit
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -38,5 +49,10 @@ jobs:
           path: |
             artifacts/lab_export_*.zip
             artifacts/lab_export_*/manifest.json
+            artifacts/lab_health_*/lab_health_report.json
+            artifacts/lab_health_*/LAB_HEALTH_REPORT.md
+            artifacts/lab_health_*/strategy_summary.csv
+            artifacts/lab_health_*/gate_failures.csv
+            artifacts/lab_health_*/signals_48h.csv
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
