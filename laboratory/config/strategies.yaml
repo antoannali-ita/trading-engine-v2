@@ -1,6 +1,10 @@
-version: 1
+version: 2
 research_only: true
 live_execution: false
+strategy_change_policy:
+  frozen_after_launch: true
+  cooldown_sessions: 7
+  note: "Any future parameter change creates a new experiment version; no retroactive tuning."
 strategies:
   trend_continuation:
     enabled: true
@@ -8,16 +12,37 @@ strategies:
     entry_modes: [pullback, breakout, volatility_expansion]
     preferred_sectors: [Technology, Semiconductors, Industrials, Energy, Communication Services]
     regimes: [bull_low_vol, bull_normal_vol, strong_trend_high_vol]
+    primary_trigger: "price > sma50 > sma200"
+    shadow_trigger_variants:
+      - id: buffer_0
+        rule: "price > sma50 > sma200"
+      - id: buffer_0_5pct
+        rule: "price > 1.005*sma50 and sma50 > sma200"
   cross_sectional_momentum:
     enabled: true
     horizon: swing_position
     preferred_sectors: [ALL, ETF]
     regimes: [bull, trending]
-  short_term_reversal:
+    scoring: "same-date universe percentile ranks: ret20 30%, ret60 35%, ret120 35%"
+    trigger: "price >= high20"
+  short_term_reversal_rsi45:
     enabled: true
+    experiment_family: short_term_reversal
+    variant: RSI45
     horizon: short_swing
     preferred_sectors: [Financials, Utilities, Healthcare, ETF]
     regimes: [sideways, high_vol_non_trending]
+    rsi_threshold: 45
+    rsi_score_depth_points: 20
+  short_term_reversal_rsi35:
+    enabled: true
+    experiment_family: short_term_reversal
+    variant: RSI35
+    horizon: short_swing
+    preferred_sectors: [Financials, Utilities, Healthcare, ETF]
+    regimes: [sideways, high_vol_non_trending]
+    rsi_threshold: 35
+    rsi_score_depth_points: 20
   pead:
     enabled: true
     horizon: swing
@@ -35,11 +60,12 @@ strategies:
     horizon: position
     preferred_sectors: [Financials, Healthcare, Industrials, Consumer, Materials, Energy]
     requires_point_in_time_fundamentals: true
-  defensive_low_vol_quality:
+  defensive_low_vol:
     enabled: true
     horizon: position
     preferred_sectors: [Utilities, Consumer Staples, defensive_Healthcare, ETF]
     regimes: [bear, high_vol]
+    note: "Pure technical low-vol/defensive strategy. 'quality' reserved for fundamental strategies."
   macro_intermarket:
     enabled: true
     horizon: swing_position
