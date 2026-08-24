@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+import yfinance as yf
 
 try:
     from dashboard import data_access
@@ -43,8 +44,53 @@ def tier_of(row: dict[str, Any]) -> str | None:
     return str(value) if value else None
 
 
-def paper_pnl(row: dict[str, Any]) -> float | None:
-    entry=n(row.get("entry_price")); last=n(row.get("last_price")) or n(row.get("exit_price")); qty=n(row.get("qty"))
+def _extract_close(data: pd.DataFrame, ticker: str, count: int) -> float | None:
+    try:
+        if data is None or data.empty: return None
+        series=data["Close"].dropna() if count==1 else data[(ticker,"Close")].dropna()
+        return float(series.iloc[-1]) if not series.empty else None
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=60,show_spinner=False)
+def market_prices(tickers: tuple[str,...]) -> dict[str,tuple[float,str]]:
+    if not tickers: return {}
+    out: dict[str,tuple[float,str]]={}
+    try:
+        intraday=yf.download(list(tickers),period="1d",interval="1m",auto_adjust=False,progress=False,group_by="ticker",threads=True)
+        for ticker in tickers:
+            px=_extract_close(intraday,ticker,len(tickers))
+            if px is not None: out[ticker]=(px,"YAHOO 1M")
+    except Exception:
+        pass
+    missing=tuple(t for t in tickers if t not in out)
+    if missing:
+        try:
+            daily=yf.download(list(missing),period="5d",interval="1d",auto_adjust=False,progress=False,group_by="ticker",threads=True)
+            for ticker in missing:
+                px=_extract_close(daily,ticker,len(missing))
+                if px is not None: out[ticker]=(px,"YAHOO CLOSE")
+        except Exception:
+            pass
+    return out
+
+
+def effective_price(row: dict[str,Any], live: dict[str,tuple[float,str]]) -> tuple[float | None,str]:
+    status=str(row.get("status") or "").upper()
+    if status=="CLOSED":
+        px=n(row.get("exit_price")) or n(row.get("last_price"))
+        return px,"CLOSED"
+    ticker=str(row.get("symbol") or "").upper()
+    quote=live.get(ticker)
+    if quote is not None: return quote
+    db=n(row.get("last_price"))
+    if db is not None: return db,"DB FALLBACK"
+    return n(row.get("entry_price")),"ENTRY FALLBACK"
+
+
+def paper_pnl(row: dict[str, Any], price: float | None = None) -> float | None:
+    entry=n(row.get("entry_price")); last=price if price is not None else (n(row.get("exit_price")) or n(row.get("last_price"))); qty=n(row.get("qty"))
     if entry is None or last is None or qty is None: return None
     slip=SLIPPAGE_BPS/10000
     return (last*(1-slip)-entry*(1+slip))*qty - 2*COMMISSION
@@ -68,7 +114,7 @@ def fmt(frame: pd.DataFrame):
 def color_trade_rows(styler, pnl_column: str):
     def row_style(row):
         value=n(row.get(pnl_column))
-        if value is None or abs(value) < 1e-12: return [""]*len(row)
+        if value is None or abs(value)<1e-12: return [""]*len(row)
         css="background-color: rgba(46, 160, 67, 0.16); color: #137333; font-weight: 600;" if value>0 else "background-color: rgba(248, 81, 73, 0.16); color: #b42318; font-weight: 600;"
         return [css]*len(row)
     return styler.apply(row_style,axis=1)
@@ -111,17 +157,13 @@ with st.sidebar:
 ### A cosa serve
 Il Laboratory è il **campo di prova** del Trading Engine. Non decide cosa comprare nel portafoglio reale: prova strategie e regole con capitale virtuale.
 
+### Prezzi
+Per le posizioni aperte usiamo: **Yahoo 1m → Yahoo ultimo close → DB → Entry**. La colonna `Fonte` mostra quale prezzo è stato usato.
+
 ### Colori
 - 🟢 **riga verde** = strategia/trade in guadagno netto.
 - 🔴 **riga rossa** = strategia/trade in perdita netta.
 - Nessun colore = risultato neutro o non ancora calcolabile.
-
-### Le 5 domande da farsi
-1. **Sta lavorando?** Guarda segnali analizzati e operazioni paper aperte.
-2. **Sta guadagnando?** Guarda P&L netto, vinte/perse e performance.
-3. **Quale strategia va meglio?** Confronta operazioni, P&L e risultati per strategia.
-4. **Cosa sta testando adesso?** Guarda le posizioni aperte.
-5. **Perché non apre più trade?** Apri la Diagnostica avanzata e guarda i gate.
 
 ### Tier A / B / C
 - **A:** quasi Production.
@@ -138,9 +180,6 @@ Il P&L è paper netto: commissioni Fineco-like **$9,90 per lato** + slippage di 
 ### Gate
 **DATA GATES** = problemi/limiti dei dati. **POLICY GATES** = regole strategiche come score, trigger, R/R, Max Buy ed earnings.
 
-### Shadow outcomes
-I rejected-C con dati validi possono essere seguiti a D+1/D+3/D+5/D+10/D+20 per misurare l'efficacia dei gate.
-
 ### Regola importante
 Il Laboratory accumula evidenza ma **non promuove automaticamente** una strategia in Production.
 """)
@@ -153,8 +192,14 @@ sessions=sorted({x for x in (session_of(r) for r in signals) if x}); latest=sess
 cur=[r for r in signals if session_of(r)==latest] if latest else []; prev=[r for r in signals if session_of(r)==previous] if previous else []
 cur_pos=[p for p in positions if session_of(p)==latest] if latest else []
 open_pos=[p for p in positions if str(p.get("status") or "").upper() in {"OPEN","TP1_HIT"}]; closed_pos=[p for p in positions if str(p.get("status") or "").upper()=="CLOSED"]
+open_symbols=tuple(sorted({str(p.get("symbol") or "").upper() for p in open_pos if p.get("symbol")}))
+live=market_prices(open_symbols)
 cur_tier=Counter(tier_of(r) for r in cur if tier_of(r)); cur_status=Counter(str(r.get("status") or "N/D").upper() for r in cur)
-open_pnls=[paper_pnl(p) for p in open_pos]; open_total=sum(x for x in open_pnls if x is not None); closed_pnls=[paper_pnl(p) for p in closed_pos]; closed_total=sum(x for x in closed_pnls if x is not None)
+open_pnls=[]
+for p in open_pos:
+    px,_=effective_price(p,live); open_pnls.append(paper_pnl(p,px))
+open_total=sum(x for x in open_pnls if x is not None)
+closed_pnls=[paper_pnl(p) for p in closed_pos]; closed_total=sum(x for x in closed_pnls if x is not None)
 wins=sum(1 for x in closed_pnls if x is not None and x>0); losses=sum(1 for x in closed_pnls if x is not None and x<0); winrate=100*wins/len(closed_pos) if closed_pos else None
 
 if latest: st.success(f"🟢 LABORATORIO ATTIVO · Ultima sessione {latest}. Ha analizzato {len(cur)} segnali e aperto {len(cur_pos)} nuovi esperimenti paper.")
@@ -166,14 +211,17 @@ st.subheader("📊 Quali strategie stanno lavorando")
 strategies=sorted({str(r.get("strategy")) for r in signals if r.get("strategy")} | {str(p.get("strategy")) for p in positions if p.get("strategy")}); summary=[]
 for strategy in strategies:
     sig=[r for r in cur if str(r.get("strategy"))==strategy]; pp=[p for p in positions if str(p.get("strategy"))==strategy]; op=[p for p in pp if str(p.get("status") or "").upper() in {"OPEN","TP1_HIT"}]; cp=[p for p in pp if str(p.get("status") or "").upper()=="CLOSED"]
-    opnl=sum(x for x in (paper_pnl(p) for p in op) if x is not None); cpnl=[paper_pnl(p) for p in cp]; ctotal=sum(x for x in cpnl if x is not None); cw=sum(1 for x in cpnl if x is not None and x>0); cl=sum(1 for x in cpnl if x is not None and x<0)
+    opnl=0.0
+    for p in op:
+        px,_=effective_price(p,live); val=paper_pnl(p,px); opnl += val or 0
+    cpnl=[paper_pnl(p) for p in cp]; ctotal=sum(x for x in cpnl if x is not None); cw=sum(1 for x in cpnl if x is not None and x>0); cl=sum(1 for x in cpnl if x is not None and x<0)
     summary.append({"Strategia":strategy,"Segnali oggi":len(sig),"Aperte":len(op),"Chiuse":len(cp),"Vinte":cw,"Perse":cl,"P&L aperto $":opnl,"P&L chiuso $":ctotal,"Stato":"🟢 ATTIVA" if sig or op else "⚪ SENZA ATTIVITÀ"})
 summary_df=pd.DataFrame(summary); st.dataframe(color_strategy_rows(fmt(summary_df)),width="stretch",hide_index=True)
 
 st.subheader("🟢 Cosa sta girando adesso"); open_rows=[]
 for p in open_pos:
-    pnlv=paper_pnl(p); ret=paper_return(p,pnlv); tier=tier_of(p) or j(p.get("details")).get("paper_tier") or "N/D"
-    open_rows.append({"Ticker":p.get("symbol"),"Strategia":p.get("strategy"),"Tier":f"C 🔬" if str(tier)=="C" else tier,"Entry $":n(p.get("entry_price")),"Prezzo $":n(p.get("last_price")),"P&L netto $":pnlv,"Performance %":ret,"Stop $":n(p.get("stop_current")) or n(p.get("stop_initial")),"TP1 $":n(p.get("tp1")),"TP2 $":n(p.get("tp2")),"Esito":"🟢 GUADAGNO" if pnlv is not None and pnlv>0 else ("🔴 PERDITA" if pnlv is not None and pnlv<0 else "⚪ N/D")})
+    px,source=effective_price(p,live); pnlv=paper_pnl(p,px); ret=paper_return(p,pnlv); tier=tier_of(p) or j(p.get("details")).get("paper_tier") or "N/D"
+    open_rows.append({"Ticker":p.get("symbol"),"Strategia":p.get("strategy"),"Tier":f"C 🔬" if str(tier)=="C" else tier,"Entry $":n(p.get("entry_price")),"Prezzo $":px,"Fonte":source,"P&L netto $":pnlv,"Performance %":ret,"Stop $":n(p.get("stop_current")) or n(p.get("stop_initial")),"TP1 $":n(p.get("tp1")),"TP2 $":n(p.get("tp2")),"Esito":"🟢 GUADAGNO" if pnlv is not None and pnlv>0 else ("🔴 PERDITA" if pnlv is not None and pnlv<0 else "⚪ N/D")})
 if open_rows:
     open_df=pd.DataFrame(open_rows); st.dataframe(color_trade_rows(fmt(open_df),"P&L netto $"),width="stretch",hide_index=True)
 else: st.info("Nessuna posizione paper aperta in questo momento.")
@@ -182,7 +230,7 @@ st.subheader("🏁 Operazioni chiuse · cosa abbiamo realmente imparato")
 cc=st.columns(5); cc[0].metric("Chiuse",len(closed_pos)); cc[1].metric("Vinte",wins); cc[2].metric("Perse",losses); cc[3].metric("P&L chiuso netto",f"${closed_total:,.2f}"); cc[4].metric("Win rate",f"{winrate:.2f}%" if winrate is not None else "N/D"); closed_rows=[]
 for p in closed_pos:
     pnlv=paper_pnl(p); ret=paper_return(p,pnlv); tier=tier_of(p) or j(p.get("details")).get("paper_tier") or "N/D"
-    closed_rows.append({"Ticker":p.get("symbol"),"Strategia":p.get("strategy"),"Tier":f"C 🔬" if str(tier)=="C" else tier,"Entry $":n(p.get("entry_price")),"Prezzo $":n(p.get("exit_price")) or n(p.get("last_price")),"P&L netto $":pnlv,"Performance %":ret,"Esito":"🟢 GUADAGNO" if pnlv is not None and pnlv>0 else ("🔴 PERDITA" if pnlv is not None and pnlv<0 else "⚪ N/D"),"Motivo":p.get("exit_reason")})
+    closed_rows.append({"Ticker":p.get("symbol"),"Strategia":p.get("strategy"),"Tier":f"C 🔬" if str(tier)=="C" else tier,"Entry $":n(p.get("entry_price")),"Prezzo $":n(p.get("exit_price")) or n(p.get("last_price")),"Fonte":"CLOSED","P&L netto $":pnlv,"Performance %":ret,"Esito":"🟢 GUADAGNO" if pnlv is not None and pnlv>0 else ("🔴 PERDITA" if pnlv is not None and pnlv<0 else "⚪ N/D"),"Motivo":p.get("exit_reason")})
 if closed_rows:
     closed_df=pd.DataFrame(closed_rows); st.dataframe(color_trade_rows(fmt(closed_df),"P&L netto $"),width="stretch",hide_index=True)
 else: st.info("Non ci sono ancora operazioni paper chiuse. Finché non maturano trade chiusi, non ha senso giudicare una strategia dal solo P&L aperto.")
@@ -205,4 +253,4 @@ with st.expander("🔧 Diagnostica avanzata · perché il laboratorio accetta o 
     st.markdown("#### Confronto ultima sessione vs precedente"); prev_pos=[p for p in positions if session_of(p)==previous] if previous else []; prev_tier=Counter(tier_of(r) for r in prev if tier_of(r))
     st.dataframe(pd.DataFrame([{"Metrica":"Segnali","Ultima":len(cur),"Precedente":len(prev)},{"Metrica":"Paper Open","Ultima":len(cur_pos),"Precedente":len(prev_pos)},{"Metrica":"Tier A","Ultima":cur_tier.get("A",0),"Precedente":prev_tier.get("A",0)},{"Metrica":"Tier B","Ultima":cur_tier.get("B",0),"Precedente":prev_tier.get("B",0)},{"Metrica":"Tier C","Ultima":cur_tier.get("C",0),"Precedente":prev_tier.get("C",0)}]),width="stretch",hide_index=True)
 
-st.caption(f"Cost model Laboratory: $9,90 per lato + {SLIPPAGE_BPS:.0f} bps slippage · Aggiornato {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S %Z')}")
+st.caption(f"Prezzi OPEN: Yahoo 1m → Yahoo close → DB → Entry · Costi: $9,90 per lato + {SLIPPAGE_BPS:.0f} bps slippage · Aggiornato {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S %Z')}")
