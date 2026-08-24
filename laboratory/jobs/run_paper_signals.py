@@ -45,6 +45,20 @@ def symbols() -> list[str]:
     return [x.strip().upper() for x in raw.split(",") if x.strip()] or DEFAULT_SYMBOLS
 
 
+def _runtime_max_position() -> float:
+    return float(os.getenv("LAB_MAX_POSITION_USD", str(MAX_POSITION_USD)))
+
+
+def _extra_lifecycle_symbols(configured_symbols: list[str], open_positions: list[dict]) -> list[str]:
+    configured = {str(x).upper() for x in configured_symbols}
+    active_symbols = {
+        str(p.get("symbol") or "").upper()
+        for p in open_positions
+        if str(p.get("status") or "").upper() in {"OPEN", "TP1_HIT"} and p.get("symbol")
+    }
+    return sorted(active_symbols - configured)
+
+
 def _safe(v):
     try:
         if pd.isna(v):
@@ -274,14 +288,16 @@ def main() -> int:
 
     client = get_supabase_client()
     watch_threshold = float(os.getenv("LAB_WATCH_SCORE", "50"))
-    lab_max_position = float(os.getenv("LAB_MAX_POSITION_USD", "10000"))
+    lab_max_position = _runtime_max_position()
     max_new_buys = int(os.getenv("LAB_MAX_NEW_BUYS", "12"))
     max_active = int(os.getenv("LAB_MAX_ACTIVE_POSITIONS", "80"))
     max_per_strategy = int(os.getenv("LAB_MAX_ACTIVE_PER_STRATEGY", "24"))
 
     written = watch_written = opened = lifecycle_updates = 0
+    symbol_failures = lifecycle_failures = 0
     now = datetime.now(timezone.utc)
     candidates: list[dict] = []
+    configured_symbols = symbols()
 
     try:
         stale_before = (now - timedelta(days=3)).isoformat()
@@ -291,8 +307,25 @@ def main() -> int:
 
     try:
         open_positions = client.table("lab_paper_positions").select("*").in_("status", ["OPEN", "TP1_HIT"]).execute().data or []
-    except Exception:
-        open_positions = []
+    except Exception as exc:
+        print(f"FATAL: cannot read active paper positions: {exc}")
+        return 1
+
+    # Lifecycle must not depend on the current candidate universe. If a ticker is
+    # removed from LAB_SYMBOLS, an already-open paper position still needs stop/TP
+    # checks. Candidate generation remains restricted to configured_symbols.
+    for lifecycle_symbol in _extra_lifecycle_symbols(configured_symbols, open_positions):
+        try:
+            lifecycle_prices = download_prices(MarketDataRequest(symbol=lifecycle_symbol, start="2024-01-01"))
+            lifecycle_frame = enrich_prices(lifecycle_prices)
+            if lifecycle_frame.empty:
+                raise RuntimeError("no enriched prices for open-position lifecycle")
+            lifecycle_last = lifecycle_frame.iloc[-1]
+            lifecycle_date = lifecycle_frame.index[-1].date().isoformat()
+            lifecycle_updates += _update_existing_positions(client, lifecycle_symbol, lifecycle_last, lifecycle_date)
+        except Exception as exc:
+            lifecycle_failures += 1
+            print(f"lifecycle {lifecycle_symbol}: {exc}")
 
     try:
         spy_prices = download_prices(MarketDataRequest(symbol="SPY", start="2024-01-01"))
@@ -302,7 +335,7 @@ def main() -> int:
 
     print(f"market_regime={market_regime.get('state', 'UNKNOWN')}")
 
-    for symbol in symbols():
+    for symbol in configured_symbols:
         try:
             prices = download_prices(MarketDataRequest(symbol=symbol, start="2024-01-01"))
             x = enrich_prices(prices)
@@ -466,6 +499,7 @@ def main() -> int:
                         "details": details,
                     })
         except Exception as exc:
+            symbol_failures += 1
             print(f"{symbol}: {exc}")
 
     # Rank after the full scan so paper capacity is not consumed simply by the
@@ -519,12 +553,14 @@ def main() -> int:
                 "details": details,
             })
 
+    total_failures = symbol_failures + lifecycle_failures
     print(
         f"opportunity rows={written} watchlist={watch_written} candidates={len(candidates)} "
         f"paper_opened={opened} lifecycle_updates={lifecycle_updates} "
+        f"symbol_failures={symbol_failures} lifecycle_failures={lifecycle_failures} "
         f"regime={market_regime.get('state', 'UNKNOWN')}"
     )
-    return 0
+    return 0 if total_failures == 0 else 1
 
 
 if __name__ == "__main__":
