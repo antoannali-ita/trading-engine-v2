@@ -29,7 +29,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
 
-      - name: Build Laboratory 48h health report
+      - name: Build Laboratory session health report
         run: python scripts/lab_health_report.py
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -53,6 +53,6 @@ jobs:
             artifacts/lab_health_*/LAB_HEALTH_REPORT.md
             artifacts/lab_health_*/strategy_summary.csv
             artifacts/lab_health_*/gate_failures.csv
-            artifacts/lab_health_*/signals_48h.csv
+            artifacts/lab_health_*/signals_latest_session.csv
           if-no-files-found: error
           retention-days: 30
