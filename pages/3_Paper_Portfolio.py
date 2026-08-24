@@ -21,17 +21,7 @@ SLIPPAGE_BPS = 5.0
 
 
 def require_access() -> None:
-    expected = (os.getenv("DASHBOARD_PASSWORD") or "").strip()
-    if not expected or st.session_state.get("dashboard_auth"):
-        return
-    st.title("🔐 Trading Engine Control Center")
-    pwd = st.text_input("Password", type="password")
-    if st.button("Accedi", type="primary"):
-        if pwd == expected:
-            st.session_state["dashboard_auth"] = True
-            st.rerun()
-        st.error("Password non valida")
-    st.stop()
+    return
 
 
 def j(value: Any) -> dict:
@@ -65,6 +55,23 @@ def gross_rr(entry, stop, tp2):
     if entry is None or stop is None or tp2 is None or entry <= stop:
         return None
     return (tp2 - entry) / (entry - stop)
+
+
+def fmt_table(frame: pd.DataFrame) -> pd.io.formats.style.Styler:
+    money_cols = {"entry","ideal_entry","last_exit","notional","stop","tp1","tp2","pnl_net_12_now","pnl_net_9_90_now"}
+    pct_cols = {"return_pct_db"}
+    ratio_cols = {"gross_rr_tp2","net_rr_12","net_rr_9_90"}
+    fmt: dict[str, str] = {}
+    for col in frame.columns:
+        if col in money_cols:
+            fmt[col] = "{:.2f}"
+        elif col in pct_cols:
+            fmt[col] = "{:.2f}%"
+        elif col in ratio_cols:
+            fmt[col] = "{:.2f}"
+        elif pd.api.types.is_float_dtype(frame[col]):
+            fmt[col] = "{:.2f}"
+    return frame.style.format(fmt, na_rep="-")
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -157,11 +164,11 @@ if (df["tier"] == "C").any():
 status_filter = st.multiselect("Stato", sorted(df["stato"].dropna().astype(str).unique()), default=sorted(df["stato"].dropna().astype(str).unique()))
 tier_filter = st.multiselect("Tier", sorted(df["tier"].dropna().astype(str).unique()), default=sorted(df["tier"].dropna().astype(str).unique()))
 shown = df[df["stato"].astype(str).isin(status_filter) & df["tier"].astype(str).isin(tier_filter)]
-st.dataframe(shown, width="stretch", hide_index=True)
+st.dataframe(fmt_table(shown), width="stretch", hide_index=True)
 
 st.subheader("Concentrazione virtuale per RiskKey")
 risk = df.groupby("risk_key", as_index=False).agg(posizioni=("ticker", "count"), notional=("notional", "sum"))
-st.dataframe(risk.sort_values("notional", ascending=False), width="stretch", hide_index=True)
+st.dataframe(fmt_table(risk.sort_values("notional", ascending=False)), width="stretch", hide_index=True)
 st.caption("Questa concentrazione è informativa. Il Portfolio Risk Engine futuro userà RiskKey per aggregare strategie diverse sullo stesso sottostante.")
 
 st.caption(f"Aggiornato: {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S %Z')}")
