@@ -74,6 +74,24 @@ def _status_label(v: Any) -> str:
     return "⚪ PARI"
 
 
+def _production_style(frame: pd.DataFrame):
+    """Forza la resa visuale a 2 decimali: round() da solo non basta con Styler/Arrow."""
+    fmt: dict[str, str] = {}
+    money_cols = {"PMC $", "Prezzo $", "Valore $", "Valore €", "P&L $", "P&L €", "Target $"}
+    pct_cols = {"P&L %", "Dist. Target %", "Peso %"}
+    fx_cols = {"PMC EUR/USD", "Cambio EUR/USD", "Target EUR/USD"}
+    for col in frame.columns:
+        if col in money_cols or col in fx_cols:
+            fmt[col] = "{:.2f}"
+        elif col in pct_cols:
+            fmt[col] = "{:.2f}"
+    styler = frame.style.format(fmt, na_rep="-")
+    pnl_subset = [c for c in ["P&L $", "P&L €", "P&L %"] if c in frame.columns]
+    if pnl_subset:
+        styler = styler.map(_pnl_color, subset=pnl_subset)
+    return styler
+
+
 cfg = _load_config()
 equities = cfg.get("equities", [])
 fx_positions = cfg.get("fx_positions", [])
@@ -136,19 +154,14 @@ if not df.empty:
 
     st.subheader("Posizioni aperte")
     show = df.copy()
-    for col in ["PMC $", "Prezzo $", "Valore $", "Valore €", "P&L $", "P&L €", "Target $"]:
-        show[col] = pd.to_numeric(show[col], errors="coerce").round(2)
-    for col in ["P&L %", "Dist. Target %"]:
-        show[col] = pd.to_numeric(show[col], errors="coerce").round(2)
     show["Qty"] = pd.to_numeric(show["Qty"], errors="coerce").astype("Int64")
-    styled = show.style.map(_pnl_color, subset=["P&L $", "P&L €", "P&L %"])
-    st.dataframe(styled, width="stretch", hide_index=True)
+    st.dataframe(_production_style(show), width="stretch", hide_index=True)
 
     st.subheader("Concentrazione per titolo")
     concentration = df[["Ticker", "Valore $"]].copy()
     concentration["Peso %"] = concentration["Valore $"] / total_usd * 100 if total_usd else 0
     concentration = concentration.sort_values("Peso %", ascending=False)
-    st.dataframe(concentration.round(2), width="stretch", hide_index=True)
+    st.dataframe(_production_style(concentration), width="stretch", hide_index=True)
 
 if fx_positions:
     st.subheader("Valuta / esposizione USD")
@@ -173,9 +186,9 @@ if fx_positions:
             "Esito": _status_label(pnl_eur),
             "Target EUR/USD": target,
         })
-    fx_df = pd.DataFrame(fx_rows).round(2)
-    fx_styled = fx_df.style.map(_pnl_color, subset=["P&L €", "P&L %"])
-    st.dataframe(fx_styled, width="stretch", hide_index=True)
+    fx_df = pd.DataFrame(fx_rows)
+    fx_df["USD"] = pd.to_numeric(fx_df["USD"], errors="coerce").round(2)
+    st.dataframe(_production_style(fx_df), width="stretch", hide_index=True)
 
 with st.sidebar:
     st.header("Guida · Portafoglio Reale")
