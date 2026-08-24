@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime
 from typing import Any
 
 import pandas as pd
 import streamlit as st
+import yfinance as yf
 
 try:
     from dashboard import data_access
@@ -40,6 +40,31 @@ def n(value: Any) -> float | None:
         return None
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def live_prices(tickers: tuple[str, ...]) -> dict[str, float]:
+    if not tickers:
+        return {}
+    try:
+        data = yf.download(
+            list(tickers), period="1d", interval="1m", auto_adjust=False,
+            progress=False, group_by="ticker", threads=True,
+        )
+        out: dict[str, float] = {}
+        for ticker in tickers:
+            try:
+                if len(tickers) == 1:
+                    series = data["Close"].dropna()
+                else:
+                    series = data[(ticker, "Close")].dropna()
+                if not series.empty:
+                    out[ticker] = float(series.iloc[-1])
+            except Exception:
+                pass
+        return out
+    except Exception:
+        return {}
+
+
 def net_pnl(entry, exit_price, qty, commission):
     entry, exit_price, qty = n(entry), n(exit_price), n(qty)
     if not entry or exit_price is None or not qty:
@@ -59,7 +84,7 @@ def gross_rr(entry, stop, tp2):
 
 def fmt_table(frame: pd.DataFrame) -> pd.io.formats.style.Styler:
     money_cols = {"entry","ideal_entry","last_exit","notional","stop","tp1","tp2","pnl_net_12_now","pnl_net_9_90_now"}
-    pct_cols = {"return_pct_db"}
+    pct_cols = {"return_pct_db","move_pct_live"}
     ratio_cols = {"gross_rr_tp2","net_rr_12","net_rr_9_90"}
     fmt: dict[str, str] = {}
     for col in frame.columns:
@@ -92,13 +117,11 @@ with st.sidebar:
 - **B:** esperimento con regole più permissive.
 - **C:** 🔬 **RESEARCH ONLY · NON OPERATIVO**.
 
-`RiskKey` raggruppa lo stesso sottostante. NVDA-Momentum e NVDA-Reversal sono esperimenti separati, ma condividono `EQUITY:NVDA`.
+Per le posizioni aperte il **prezzo corrente viene letto dal mercato** con cache di circa 60 secondi. Se il feed non risponde, compare `DB FALLBACK`.
 
 I costi mostrano due scenari Fineco:
 - storico/conservativo: **$12 per eseguito**;
-- scenario scontato fornito dall'utente: **$9,90 per eseguito**.
-
-Lo slippage è una stima di ricerca, non un dato storico di bid/ask.
+- scenario scontato: **$9,90 per eseguito**.
 """)
 
 try:
@@ -111,34 +134,56 @@ if not positions:
     st.info("Nessuna paper position disponibile.")
     st.stop()
 
+open_symbols = tuple(sorted({
+    str(p.get("symbol") or "").upper()
+    for p in positions
+    if str(p.get("status") or "").upper() in {"OPEN", "TP1_HIT"} and p.get("symbol")
+}))
+market_prices = live_prices(open_symbols)
+
 rows = []
 for p in positions:
     d = j(p.get("details"))
     cost = j(d.get("cost_model"))
     tier = d.get("paper_tier") or "N/D"
-    last = n(p.get("last_price")) or n(p.get("exit_price")) or n(p.get("entry_price"))
-    current_pnl = net_pnl(p.get("entry_price"), last, p.get("qty"), CURRENT_COMMISSION)
-    discount_pnl = net_pnl(p.get("entry_price"), last, p.get("qty"), DISCOUNT_COMMISSION)
-    capital = n(p.get("capital")) or ((n(p.get("entry_price")) or 0) * (n(p.get("qty")) or 0))
+    status = str(p.get("status") or "N/D").upper()
+    ticker = str(p.get("symbol") or "").upper()
+    entry = n(p.get("entry_price"))
+
+    if status in {"OPEN", "TP1_HIT"}:
+        live = market_prices.get(ticker)
+        last = live if live is not None else (n(p.get("last_price")) or entry)
+        source = "LIVE 1M" if live is not None else "DB FALLBACK"
+    else:
+        last = n(p.get("exit_price")) or n(p.get("last_price")) or entry
+        source = "CLOSED"
+
+    current_pnl = net_pnl(entry, last, p.get("qty"), CURRENT_COMMISSION)
+    discount_pnl = net_pnl(entry, last, p.get("qty"), DISCOUNT_COMMISSION)
+    capital = n(p.get("capital")) or ((entry or 0) * (n(p.get("qty")) or 0))
     safety = d.get("safety_label") or ("RESEARCH_ONLY_NON_OPERATIONAL" if tier == "C" else "PAPER")
+    move_pct = ((last / entry) - 1) * 100 if last is not None and entry else None
+
     rows.append({
         "apertura": p.get("opened_at") or p.get("created_at"),
-        "ticker": p.get("symbol"),
+        "ticker": ticker,
         "strategy": p.get("strategy"),
         "tier": tier,
         "safety": safety,
-        "risk_key": d.get("risk_key") or f"EQUITY:{str(p.get('symbol') or '').upper()}",
+        "risk_key": d.get("risk_key") or f"EQUITY:{ticker}",
         "experiment_key": d.get("experiment_key"),
-        "stato": p.get("status"),
-        "entry": n(p.get("entry_price")),
+        "stato": status,
+        "entry": entry,
         "ideal_entry": n(d.get("ideal_entry")),
         "last_exit": last,
+        "price_source": source,
+        "move_pct_live": move_pct,
         "qty": p.get("qty"),
         "notional": capital,
         "stop": n(p.get("stop_current")) or n(p.get("stop_initial")),
         "tp1": n(p.get("tp1")),
         "tp2": n(p.get("tp2")),
-        "gross_rr_tp2": n(cost.get("gross_rr")) or gross_rr(p.get("entry_price"), p.get("stop_initial"), p.get("tp2")),
+        "gross_rr_tp2": n(cost.get("gross_rr")) or gross_rr(entry, p.get("stop_initial"), p.get("tp2")),
         "net_rr_12": n(cost.get("net_rr_fineco_current_12")),
         "net_rr_9_90": n(cost.get("net_rr_fineco_discount_9_90")),
         "pnl_net_12_now": current_pnl,
