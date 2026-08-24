@@ -50,6 +50,30 @@ def _usd_eur_rate() -> float | None:
         return None
 
 
+def _pnl_color(v: Any) -> str:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return ""
+    if x > 0:
+        return "color: #21c55d; font-weight: 700;"
+    if x < 0:
+        return "color: #ef4444; font-weight: 700;"
+    return ""
+
+
+def _status_label(v: Any) -> str:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return "⚪ N/D"
+    if x > 0:
+        return "🟢 GUADAGNO"
+    if x < 0:
+        return "🔴 PERDITA"
+    return "⚪ PARI"
+
+
 cfg = _load_config()
 equities = cfg.get("equities", [])
 fx_positions = cfg.get("fx_positions", [])
@@ -86,6 +110,7 @@ for r in equities:
         "P&L $": pnl_usd,
         "P&L €": pnl_eur,
         "P&L %": pnl_pct,
+        "Esito": _status_label(pnl_usd),
         "Target $": target,
         "Dist. Target %": dist_target,
         "Stato": "OPEN" if qty > 0 else "CLOSED",
@@ -106,7 +131,7 @@ if not df.empty:
     c1.metric("Posizioni", len(df))
     c2.metric("Valore azioni $", f"${total_usd:,.2f}")
     c3.metric("Valore azioni €", f"€{total_eur:,.2f}" if total_eur is not None else "N/D")
-    c4.metric("P&L aperto $", f"${total_pnl_usd:,.2f}")
+    c4.metric("P&L aperto $", f"${total_pnl_usd:,.2f}", delta=f"{total_pnl_usd:+,.2f} $")
     c5.metric("In profitto / perdita", f"{winners} / {losers}")
 
     st.subheader("Posizioni aperte")
@@ -116,7 +141,8 @@ if not df.empty:
     for col in ["P&L %", "Dist. Target %"]:
         show[col] = pd.to_numeric(show[col], errors="coerce").round(2)
     show["Qty"] = pd.to_numeric(show["Qty"], errors="coerce").astype("Int64")
-    st.dataframe(show, width="stretch", hide_index=True)
+    styled = show.style.map(_pnl_color, subset=["P&L $", "P&L €", "P&L %"])
+    st.dataframe(styled, width="stretch", hide_index=True)
 
     st.subheader("Concentrazione per titolo")
     concentration = df[["Ticker", "Valore $"]].copy()
@@ -144,15 +170,20 @@ if fx_positions:
             "Valore €": value_eur,
             "P&L €": pnl_eur,
             "P&L %": pnl_pct,
+            "Esito": _status_label(pnl_eur),
             "Target EUR/USD": target,
         })
-    st.dataframe(pd.DataFrame(fx_rows).round(4), width="stretch", hide_index=True)
+    fx_df = pd.DataFrame(fx_rows).round(4)
+    fx_styled = fx_df.style.map(_pnl_color, subset=["P&L €", "P&L %"])
+    st.dataframe(fx_styled, width="stretch", hide_index=True)
 
 with st.sidebar:
     st.header("Guida · Portafoglio Reale")
     st.markdown(
         """
         **Questa pagina mostra capitale reale.**\n\n
+        - 🟢 verde = posizione in guadagno.\n
+        - 🔴 rosso = posizione in perdita.\n
         - `Qty` è la quantità residua effettivamente ancora in portafoglio.\n
         - Vendite parziali riducono `Qty`; la posizione resta OPEN finché Qty > 0.\n
         - `LIVE` indica prezzo recuperato dal mercato; `SNAPSHOT` è solo fallback.\n
