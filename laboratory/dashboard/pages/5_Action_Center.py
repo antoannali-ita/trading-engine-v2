@@ -31,16 +31,16 @@ from lab.ui import (
     trigger_class,
 )
 
-STRATEGY_BUY_THRESHOLD = 75.0
-TRADE_BUY_THRESHOLD = 75.0
+STRICT_STRATEGY_REFERENCE = 75.0
+STRICT_TRADE_REFERENCE = 75.0
 
 st.set_page_config(page_title="Trading Lab | Action Center", layout="wide", page_icon="⚡")
 require_dashboard_auth()
 apply_theme()
 page_header(
     "Action Center",
-    "Funnel decisionale del Laboratory: Strategy Score → Trade Score → Portfolio Fit → gates → PAPER OPEN. Nessun ordine reale viene creato qui.",
-    eyebrow="LAB · STRATEGY · TRADE · PORTFOLIO · RISK",
+    "Funnel decisionale del Laboratory: Strategy Score → Trade Score → Paper Policy A/B/C → Portfolio Gate → PAPER OPEN. Nessun ordine reale viene creato qui.",
+    eyebrow="LAB · STRATEGY · TRADE · PAPER POLICY · PORTFOLIO · RISK",
 )
 
 
@@ -61,11 +61,13 @@ def _gate(details: dict, key: str) -> dict:
 def _failed_list(details: dict) -> list[str]:
     parts: list[str] = []
     dq = _gate(details, "data_quality")
-    tg = _gate(details, "trade_eligibility")
-    pg = _gate(details, "portfolio_eligibility")
+    strict = _gate(details, "strict_trade_eligibility") or _gate(details, "trade_eligibility")
+    paper = _gate(details, "paper_policy")
+    portfolio = _gate(details, "portfolio_eligibility")
     parts.extend(dq.get("red", []) or [])
-    parts.extend(tg.get("failed", []) or [])
-    parts.extend(pg.get("failed", []) or [])
+    parts.extend(strict.get("failed", []) or [])
+    parts.extend(paper.get("hard_failed", []) or [])
+    parts.extend(portfolio.get("failed", []) or [])
     return list(dict.fromkeys(str(x) for x in parts if x))
 
 
@@ -95,13 +97,14 @@ def _num(value):
         return None
 
 
-def _readiness(row) -> tuple[int, int, list[str]]:
+def _strict_reference_readiness(row) -> tuple[int, int, list[str]]:
+    """Diagnostic only. This is NOT the Laboratory A/B/C admission policy."""
     strategy = _num(row.get("strategy_score"))
     trade = _num(row.get("trade_score"))
     rr = _num(row.get("rr_net_tp2"))
     checks = [
-        (strategy is not None and strategy >= STRATEGY_BUY_THRESHOLD, f"Strategy ≥ {STRATEGY_BUY_THRESHOLD:.0f}"),
-        (trade is not None and trade >= TRADE_BUY_THRESHOLD, f"Trade ≥ {TRADE_BUY_THRESHOLD:.0f}"),
+        (strategy is not None and strategy >= STRICT_STRATEGY_REFERENCE, f"Strategy ≥ {STRICT_STRATEGY_REFERENCE:.0f}"),
+        (trade is not None and trade >= STRICT_TRADE_REFERENCE, f"Trade ≥ {STRICT_TRADE_REFERENCE:.0f}"),
         (rr is not None and rr >= MIN_NET_RR, f"Net R/R ≥ {MIN_NET_RR:.2f}"),
         (_trigger_pass(row), "Trigger CONFIRMED"),
         (_data_pass(row), "Data Quality not RED"),
@@ -112,16 +115,30 @@ def _readiness(row) -> tuple[int, int, list[str]]:
     return passed, len(checks), missing
 
 
-def _score_with_requirement(value, threshold: float) -> str:
-    return f"{fmt_score(value)}  (≥ {threshold:.0f})"
+def _score_with_reference(value, threshold: float) -> str:
+    return f"{fmt_score(value)}  (strict ref ≥ {threshold:.0f})"
 
 
-def _rr_with_requirement(value) -> str:
-    return f"{fmt_rr(value)}  (≥ {MIN_NET_RR:.2f})"
+def _rr_with_reference(value) -> str:
+    return f"{fmt_rr(value)}  (strict ref ≥ {MIN_NET_RR:.2f})"
 
 
-def _portfolio_with_requirement(row) -> str:
-    return f"{fmt_score(row.get('portfolio_fit'))}  (PASS required)"
+def _portfolio_status(row) -> str:
+    gate = _gate(_details(row), "portfolio_eligibility")
+    if not gate:
+        return "N/D"
+    return "PASS" if gate.get("eligible") else "FAIL"
+
+
+def _paper_tier(row) -> str:
+    details = _details(row)
+    policy = _gate(details, "paper_policy")
+    return str(details.get("paper_tier") or policy.get("tier") or "N/D")
+
+
+def _safety_label(row) -> str:
+    policy = _gate(_details(row), "paper_policy")
+    return str(policy.get("safety_label") or "N/D")
 
 
 try:
@@ -142,10 +159,12 @@ for col in ["score", "price", "entry", "max_buy", "stop", "tp1", "tp2", "alert_p
 
 watch["strategy_score"] = watch.apply(lambda r: _extract(r, "strategy_score", r.get("score")), axis=1)
 watch["trade_score"] = watch.apply(lambda r: _extract(r, "trade_score"), axis=1)
-watch["portfolio_fit"] = watch.apply(lambda r: _extract(r, "portfolio_fit_score"), axis=1)
 watch["rr_net_tp2"] = watch.apply(lambda r: _extract(r, "rr_net_tp2"), axis=1)
 watch["data_quality"] = watch.apply(lambda r: (_extract(r, "data_quality", {}) or {}).get("status", "N/D"), axis=1)
 watch["regime"] = watch.apply(lambda r: (_extract(r, "market_regime", {}) or {}).get("state", "N/D"), axis=1)
+watch["paper_tier"] = watch.apply(_paper_tier, axis=1)
+watch["safety_label"] = watch.apply(_safety_label, axis=1)
+watch["portfolio_gate"] = watch.apply(_portfolio_status, axis=1)
 watch["gate_result"] = watch.apply(lambda r: _failed_text(_details(r)), axis=1)
 
 rank = {"PAPER_OPEN": 0, "CONFIRMED": 1, "PRE_BUY": 2, "NEAR_SETUP": 3, "WATCH": 4, "BLOCKED_DATA": 8, "BENCHMARK": 9}
@@ -171,32 +190,38 @@ k4.metric("PRE-BUY", int((watch["status"].astype(str).str.upper() == "PRE_BUY").
 k5.metric("Data Quality RED", int((watch["data_quality"].astype(str).str.upper() == "RED").sum()))
 k6.metric("Open Paper Positions", len(open_paper))
 
+st.info(
+    "PAPER OPEN follows the Laboratory research policy A/B/C. The strict 75/75, R/R 2.00 and CONFIRMED checks below are a reference diagnostic only, not the admission rule for every paper tier."
+)
+
 st.markdown("### Best Lab Opportunity")
 best = view.iloc[0]
 with st.container(border=True):
     st.markdown(f'<div class="candidate-title" style="font-size:1.22rem">{candidate_title(best.get("symbol"))}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="candidate-state">{fmt_status(best.get("status"))} · {fmt_strategy(best.get("strategy"))}</div>', unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns(4, gap="small")
-    c1.metric("Strategy Score", _score_with_requirement(best.get("strategy_score"), STRATEGY_BUY_THRESHOLD))
-    c2.metric("Trade Score", _score_with_requirement(best.get("trade_score"), TRADE_BUY_THRESHOLD))
-    c3.metric("Portfolio Fit", _portfolio_with_requirement(best))
-    c4.metric("Net R/R TP2", _rr_with_requirement(best.get("rr_net_tp2")))
+    st.caption(f"Paper Tier: {_paper_tier(best)} · Safety: {_safety_label(best)}")
 
-    passed, total, missing_requirements = _readiness(best)
-    st.progress(passed / total, text=f"BUY Readiness: {passed}/{total} requirements passed")
+    c1, c2, c3, c4 = st.columns(4, gap="small")
+    c1.metric("Strategy Score", _score_with_reference(best.get("strategy_score"), STRICT_STRATEGY_REFERENCE))
+    c2.metric("Trade Score", _score_with_reference(best.get("trade_score"), STRICT_TRADE_REFERENCE))
+    c3.metric("Portfolio Gate", _portfolio_status(best))
+    c4.metric("Net R/R TP2", _rr_with_reference(best.get("rr_net_tp2")))
+
+    passed, total, missing_requirements = _strict_reference_readiness(best)
+    st.progress(passed / total, text=f"Strict Reference Readiness: {passed}/{total} checks passed")
     if missing_requirements:
-        st.caption("Missing requirements: " + " · ".join(missing_requirements))
+        st.caption("Strict reference missing: " + " · ".join(missing_requirements))
     else:
-        st.caption("All dashboard-visible BUY requirements passed. Final state still follows the Laboratory gatekeeper.")
+        st.caption("All strict reference checks passed. Actual paper admission still follows the persisted A/B/C policy and portfolio gate.")
 
     a, b, c, d = st.columns(4, gap="small")
     trigger = fmt_trigger(best.get("trigger"))
     with a:
-        st.caption("Trigger (CONFIRMED required)")
+        st.caption("Trigger (strict reference expects CONFIRMED)")
         st.markdown(f'<span class="trigger-badge {trigger_class(trigger)}">{trigger}</span>', unsafe_allow_html=True)
-    b.write(f"**Data Quality:** {fmt_quality(best.get('data_quality', 'N/D'))}  (not RED)")
+    b.write(f"**Data Quality:** {fmt_quality(best.get('data_quality', 'N/D'))}")
     c.write(f"**Regime:** {fmt_regime(best.get('regime', 'N/D'))}")
-    d.write(f"**Gate:** {best.get('gate_result', 'N/D')}  (PASS required)")
+    d.write(f"**Diagnostics:** {best.get('gate_result', 'N/D')}")
 
     x1, x2, x3, x4 = st.columns(4, gap="small")
     x1.write(f"**Entry:** {fmt_money(best.get('entry'))}")
@@ -206,8 +231,8 @@ with st.container(border=True):
     details = _details(best)
     st.caption(
         f"Risk-based Qty: {fmt_qty(details.get('qty'))} · Capital: {fmt_money(details.get('capital'))} · "
-        f"Estimated Max Loss: {fmt_money(details.get('loss_max'))} · Earnings: {details.get('earnings_date', 'N/D')} · "
-        f"Execution Model: {details.get('execution_cost_model', 'N/D')}"
+        f"Position Cap: {fmt_money(details.get('max_position_policy'))} · Estimated Max Loss: {fmt_money(details.get('loss_max'))} · "
+        f"Earnings: {details.get('earnings_date', 'N/D')} · Execution Model: {details.get('execution_cost_model', 'N/D')}"
     )
 
 if len(view) > 1:
@@ -218,17 +243,18 @@ if len(view) > 1:
             with st.container(border=True):
                 st.markdown(f'<div class="candidate-title">{candidate_title(row.get("symbol"))}</div>', unsafe_allow_html=True)
                 st.markdown(f'<div class="candidate-state">{fmt_status(row.get("status"))} · {fmt_strategy(row.get("strategy"))}</div>', unsafe_allow_html=True)
+                st.caption(f"Paper Tier: {_paper_tier(row)} · Safety: {_safety_label(row)}")
                 x1, x2, x3 = st.columns(3, gap="small")
-                x1.metric("Strategy", _score_with_requirement(row.get("strategy_score"), STRATEGY_BUY_THRESHOLD))
-                x2.metric("Trade", _score_with_requirement(row.get("trade_score"), TRADE_BUY_THRESHOLD))
-                x3.metric("Portfolio", _portfolio_with_requirement(row))
-                passed, total, missing_requirements = _readiness(row)
+                x1.metric("Strategy", _score_with_reference(row.get("strategy_score"), STRICT_STRATEGY_REFERENCE))
+                x2.metric("Trade", _score_with_reference(row.get("trade_score"), STRICT_TRADE_REFERENCE))
+                x3.metric("Portfolio", _portfolio_status(row))
+                passed, total, missing_requirements = _strict_reference_readiness(row)
                 st.caption(
-                    f"Readiness {passed}/{total} · DQ {fmt_quality(row.get('data_quality', 'N/D'))} · "
-                    f"R/R {fmt_rr(row.get('rr_net_tp2'))} (≥ {MIN_NET_RR:.2f}) · Gate {row.get('gate_result', 'PASS')}"
+                    f"Strict ref {passed}/{total} · DQ {fmt_quality(row.get('data_quality', 'N/D'))} · "
+                    f"R/R {fmt_rr(row.get('rr_net_tp2'))} · Diagnostics {row.get('gate_result', 'PASS')}"
                 )
                 if missing_requirements:
-                    st.caption("Missing: " + " · ".join(missing_requirements))
+                    st.caption("Strict ref missing: " + " · ".join(missing_requirements))
                 st.markdown(
                     f'<div class="candidate-detail"><b>Entry / Max Buy:</b> {fmt_money(row.get("entry"))} / {fmt_money(row.get("max_buy"))}<br>'
                     f'<b>Stop:</b> {fmt_money(row.get("stop"))} · <b>TP2:</b> {fmt_money(row.get("tp2"))}</div>',
@@ -244,21 +270,21 @@ with st.expander("Full Operational Funnel", expanded=False):
             display[col] = display[col].map(fmt_money)
     if "distance_to_entry_pct" in display:
         display["distance_to_entry_pct"] = display["distance_to_entry_pct"].map(fmt_pct)
-    for col in ["strategy_score", "trade_score", "portfolio_fit"]:
+    for col in ["strategy_score", "trade_score"]:
         if col in display:
             display[col] = display[col].map(fmt_score)
     if "rr_net_tp2" in display:
         display["rr_net_tp2"] = display["rr_net_tp2"].map(fmt_rr)
     preferred = [
-        "symbol", "azienda", "strategy", "status", "strategy_score", "trade_score", "portfolio_fit",
-        "data_quality", "regime", "gate_result", "trigger", "price", "entry", "max_buy", "stop",
-        "tp1", "tp2", "rr_net_tp2", "alert_type", "alert_price", "distance_to_entry_pct",
-        "signal_date", "last_seen_at",
+        "symbol", "azienda", "strategy", "status", "paper_tier", "safety_label",
+        "strategy_score", "trade_score", "portfolio_gate", "data_quality", "regime", "gate_result",
+        "trigger", "price", "entry", "max_buy", "stop", "tp1", "tp2", "rr_net_tp2",
+        "alert_type", "alert_price", "distance_to_entry_pct", "signal_date", "last_seen_at",
     ]
     cols = [c for c in preferred if c in display.columns]
     st.dataframe(localize_table(display[cols]), use_container_width=True, hide_index=True)
 
 st.caption(
-    "PAPER OPEN requires Strategy ≥75, Trade ≥75, Net R/R ≥2.00, CONFIRMED trigger, non-RED Data Quality and Portfolio Gate PASS. "
-    "Portfolio Fit has no invented numeric threshold: V1 is a deterministic eligibility gate."
+    "Laboratory research policy: Tier A/B/C determines paper eligibility; Tier C is research-only/non-operational. "
+    "The strict 75/75, R/R ≥2.00 and CONFIRMED checks shown above are diagnostics and must not be confused with the A/B/C admission policy."
 )
