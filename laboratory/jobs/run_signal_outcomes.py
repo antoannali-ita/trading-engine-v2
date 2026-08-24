@@ -34,11 +34,31 @@ def _num(value):
 
 def _block_reasons(details: dict) -> list[str]:
     reasons: list[str] = []
-    for section, key in (("data_quality", "red"), ("trade_eligibility", "failed"), ("portfolio_eligibility", "failed")):
+    for section, key in (
+        ("data_quality", "red"),
+        ("trade_eligibility", "failed"),
+        ("portfolio_eligibility", "failed"),
+    ):
         value = details.get(section)
         if isinstance(value, dict):
             reasons.extend(value.get(key, []) or [])
+    policy = details.get("paper_policy")
+    if isinstance(policy, dict):
+        reasons.extend(policy.get("hard_failed", []) or [])
     return list(dict.fromkeys(str(x) for x in reasons))
+
+
+def _observation_group(signal: dict, details: dict) -> tuple[str, bool]:
+    dq = details.get("data_quality") if isinstance(details.get("data_quality"), dict) else {}
+    policy = details.get("paper_policy") if isinstance(details.get("paper_policy"), dict) else {}
+    status = str(signal.get("status") or "").upper()
+    if str(dq.get("status") or "").upper() == "RED" or status == "BLOCKED_DATA":
+        return "DATA_REJECT", True
+    if status == "PAPER_OPEN":
+        return "ACCEPTED_PAPER", False
+    if policy.get("eligible"):
+        return "PAPER_ELIGIBLE_NOT_OPENED", False
+    return "REJECTED_C_VALID_DATA", False
 
 
 def _slice_from_signal(prices: pd.DataFrame, signal_date: str) -> pd.DataFrame:
@@ -62,13 +82,14 @@ def _outcome_payload(signal: dict, prices: pd.DataFrame, spy: pd.DataFrame) -> d
     if path.empty:
         return None
 
-    # Row 0 is the signal session. D+N is N subsequent trading sessions.
     base_close = entry
     details = _details(signal)
     stop = _num(signal.get("proposed_stop"))
     tp2 = _num(signal.get("proposed_target"))
     tp1 = _num(details.get("tp1"))
     risk_per_share = (entry - stop) if stop is not None and entry > stop else None
+    observation_group, exclude_from_performance = _observation_group(signal, details)
+    paper_tier = details.get("paper_tier") or (details.get("paper_policy") or {}).get("tier")
 
     payload = {
         "symbol": signal.get("symbol"),
@@ -86,7 +107,17 @@ def _outcome_payload(signal: dict, prices: pd.DataFrame, spy: pd.DataFrame) -> d
         "tp2_reference": tp2,
         "risk_per_share": risk_per_share,
         "last_evaluated_at": datetime.now(timezone.utc).isoformat(),
-        "details": {"method": "CLOSE_HORIZONS_HIGH_LOW_EXCURSIONS_V1", "benchmark": "SPY"},
+        "details": {
+            "method": "CLOSE_HORIZONS_HIGH_LOW_EXCURSIONS_V2",
+            "benchmark": "SPY",
+            "observation_group": observation_group,
+            "exclude_from_performance": exclude_from_performance,
+            "paper_tier": paper_tier,
+            "risk_key": details.get("risk_key") or f"EQUITY:{str(signal.get('symbol') or '').upper()}",
+            "experiment_key": details.get("experiment_key"),
+            "safety_label": details.get("safety_label"),
+            "shadow_outcome": observation_group == "REJECTED_C_VALID_DATA",
+        },
     }
 
     max_horizon = 0
@@ -100,7 +131,6 @@ def _outcome_payload(signal: dict, prices: pd.DataFrame, spy: pd.DataFrame) -> d
                 spy_ret = (float(spy_path.iloc[n]["Close"]) / spy_base - 1.0) * 100.0
                 payload[f"excess_ret_d{n}"] = ret - spy_ret
 
-    # Excursions use all available sessions after signal up to D+60.
     excursion = path.iloc[1 : min(len(path), 61)]
     if not excursion.empty:
         highs = pd.to_numeric(excursion["High"], errors="coerce")
@@ -137,7 +167,6 @@ def main() -> int:
         print("no lab_paper_signals to evaluate")
         return 0
 
-    # Keep recent signals; D+60 needs roughly three calendar months.
     cutoff = (datetime.now(timezone.utc).date() - timedelta(days=120)).isoformat()
     rows = [r for r in rows if str(r.get("signal_date", "")) >= cutoff]
     symbols = sorted({str(r.get("symbol", "")).upper() for r in rows if r.get("symbol")})
