@@ -48,17 +48,37 @@ def fmt_dt(v: Any) -> str:
         return str(v).split(".")[0]
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def live_prices(tickers: tuple[str, ...]) -> dict[str, float]:
-    """Prezzi correnti/ultimi disponibili per le posizioni OPEN.
+def _extract_close(data: pd.DataFrame, ticker: str, ticker_count: int) -> float | None:
+    try:
+        if data is None or data.empty:
+            return None
+        if ticker_count == 1:
+            series = data["Close"].dropna()
+        else:
+            series = data[(ticker, "Close")].dropna()
+        if series.empty:
+            return None
+        return float(series.iloc[-1])
+    except Exception:
+        return None
 
-    Non usa last_price del DB come fonte primaria perché il lifecycle worker è
-    giornaliero e quindi quel campo può coincidere con l'entry per molte ore.
+
+@st.cache_data(ttl=60, show_spinner=False)
+def market_prices(tickers: tuple[str, ...]) -> dict[str, tuple[float, str]]:
+    """Prezzo migliore disponibile per ogni ticker OPEN.
+
+    Ordine delle fonti:
+    1) Yahoo intraday 1m
+    2) Yahoo ultimo close giornaliero disponibile
+    Il DB viene gestito successivamente per singola posizione.
     """
     if not tickers:
         return {}
+
+    out: dict[str, tuple[float, str]] = {}
+
     try:
-        data = yf.download(
+        intraday = yf.download(
             list(tickers),
             period="1d",
             interval="1m",
@@ -67,20 +87,33 @@ def live_prices(tickers: tuple[str, ...]) -> dict[str, float]:
             group_by="ticker",
             threads=True,
         )
-        out: dict[str, float] = {}
         for ticker in tickers:
-            try:
-                if len(tickers) == 1:
-                    series = data["Close"].dropna()
-                else:
-                    series = data[(ticker, "Close")].dropna()
-                if not series.empty:
-                    out[ticker] = float(series.iloc[-1])
-            except Exception:
-                pass
-        return out
+            price = _extract_close(intraday, ticker, len(tickers))
+            if price is not None:
+                out[ticker] = (price, "YAHOO 1M")
     except Exception:
-        return {}
+        pass
+
+    missing = tuple(t for t in tickers if t not in out)
+    if missing:
+        try:
+            daily = yf.download(
+                list(missing),
+                period="5d",
+                interval="1d",
+                auto_adjust=False,
+                progress=False,
+                group_by="ticker",
+                threads=True,
+            )
+            for ticker in missing:
+                price = _extract_close(daily, ticker, len(missing))
+                if price is not None:
+                    out[ticker] = (price, "YAHOO CLOSE")
+        except Exception:
+            pass
+
+    return out
 
 
 def pnl_components(entry: Any, last: Any, qty: Any) -> tuple[float | None, float | None, float | None]:
@@ -152,10 +185,11 @@ st.caption("Cosa sta girando adesso, con quale strategia e se sta guadagnando o 
 with st.sidebar:
     st.markdown("### Come leggere questa pagina")
     st.markdown(
-        "**Prezzo attuale** viene letto direttamente dal mercato con cache di circa 60 secondi. Se il feed non risponde, viene usato il prezzo salvato nel database e la colonna Fonte lo segnala.\n\n"
+        "**Prezzo attuale** usa questa gerarchia: Yahoo 1 minuto → Yahoo ultimo close → database → Entry. "
+        "La colonna **Fonte** dice esattamente quale dato è stato usato.\n\n"
         "**P&L lordo** misura solo il movimento del titolo.\n\n"
         "**Costi stimati** = commissioni Fineco-like $9,90 per lato + slippage 5 bps.\n\n"
-        "**P&L netto** = P&L lordo meno costi. Quindi Entry e Prezzo uguali possono dare netto negativo, ma ora lo vedi separatamente.\n\n"
+        "**P&L netto** = P&L lordo meno costi. Quindi Entry e Prezzo uguali possono dare netto negativo per i costi.\n\n"
         "**Tier C** = 🔬 RESEARCH ONLY, mai operativo."
     )
 
@@ -173,7 +207,7 @@ open_symbols = tuple(sorted({
     for p in positions
     if str(p.get("status") or "").upper() in {"OPEN", "TP1_HIT"} and p.get("symbol")
 }))
-market_prices = live_prices(open_symbols)
+prices = market_prices(open_symbols)
 
 rows = []
 for p in positions:
@@ -194,10 +228,13 @@ for p in positions:
         net = realized_pnl(p)
         gross_pct = ((exit_price / entry) - 1) * 100 if exit_price is not None and entry else None
     else:
-        current = market_prices.get(ticker)
-        source = "LIVE 1M" if current is not None else "DB FALLBACK"
-        if current is None:
-            current = db_last or entry
+        quote = prices.get(ticker)
+        if quote is not None:
+            current, source = quote
+        elif db_last is not None:
+            current, source = db_last, "DB FALLBACK"
+        else:
+            current, source = entry, "ENTRY FALLBACK"
         gross, costs, net = pnl_components(entry, current, qty)
         gross_pct = ((current / entry) - 1) * 100 if current is not None and entry else None
 
@@ -288,5 +325,5 @@ else:
     st.markdown("#### Performance storica per strategia")
     st.dataframe(fmt_table(cs.sort_values("PnL_netto", ascending=False)), width="stretch", hide_index=True)
 
-st.caption("Prezzi OPEN: feed mercato 1 minuto con cache 60s; fallback al DB se indisponibile. P&L netto = movimento titolo - commissioni - slippage.")
+st.caption("Prezzi OPEN: Yahoo 1m → Yahoo ultimo close → DB → Entry. Cache mercato 60s. P&L netto = movimento titolo - commissioni - slippage.")
 st.caption(f"Aggiornato: {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S %Z')}")
