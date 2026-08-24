@@ -1,0 +1,65 @@
+name: Laboratory V2 Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'pages/**'
+      - 'dashboard/pages/**'
+      - 'docs/LABORATORY_V2_GUIDELINES.md'
+      - '.github/workflows/laboratory_v2_validation.yml'
+      - '.github/workflows/lab_paper_scheduler.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  laboratory-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout strategy laboratory
+        uses: actions/checkout@v4
+        with:
+          ref: strategy-lab-v1
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: laboratory/requirements.txt
+      - name: Install Laboratory dependencies
+        working-directory: laboratory
+        run: pip install -r requirements.txt
+      - name: Compile Laboratory V2 modules
+        working-directory: laboratory
+        run: |
+          python -m py_compile src/lab/paper_policy.py
+          python -m py_compile jobs/run_paper_signals.py
+          python -m py_compile jobs/enrich_lab_metadata.py
+          python -m py_compile jobs/run_signal_outcomes.py
+      - name: Run Laboratory unit tests
+        working-directory: laboratory
+        env:
+          PYTHONPATH: ${{ github.workspace }}/laboratory/src
+        run: pytest -q tests
+
+  dashboard-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout dashboard
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile Laboratory dashboard pages
+        run: |
+          python -m py_compile pages/2_Laboratory_Control.py
+          python -m py_compile pages/3_Paper_Portfolio.py
+          python -m py_compile pages/4_Research_Evolution.py
+          python -m py_compile dashboard/pages/2_Laboratory_Control.py
+          python -m py_compile dashboard/pages/3_Paper_Portfolio.py
+          python -m py_compile dashboard/pages/4_Research_Evolution.py
