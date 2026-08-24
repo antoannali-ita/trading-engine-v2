@@ -3,6 +3,16 @@ from __future__ import annotations
 from typing import Any
 
 
+def _tier_check(name: str, failures: list[str], *, research_only: bool = False) -> dict[str, Any]:
+    return {
+        "tier": name,
+        "eligible": not failures,
+        "failed": failures,
+        "research_only": research_only,
+        "operational": False if research_only else None,
+    }
+
+
 def classify_paper_tier(
     *,
     strategy_score: float,
@@ -19,112 +29,127 @@ def classify_paper_tier(
     """Research-only paper admission policy.
 
     Production rules are intentionally NOT reused here. The Laboratory needs a
-    larger forward sample, so only true data/execution problems are hard vetoes.
-    A/B/C preserve the quality of the setup at entry instead of silently
-    loosening one global threshold.
+    larger forward sample, so A/B/C are three explicit experiments rather than
+    one silently loosened threshold.
+
+    Data policy:
+    - RED: hard veto for every tier.
+    - YELLOW: admissible only for B/C and always flagged.
+    - GREEN: may enter A/B/C according to policy conditions.
+
+    Tier C is counterfactual research only and must never be interpreted as an
+    operational BUY recommendation.
     """
-    hard_failed: list[str] = []
-    softened: list[str] = []
+    data_status = str(data_quality.get("status") or "UNKNOWN").upper()
+    data_failed: list[str] = []
+    policy_hard_failed: list[str] = []
+    warnings: list[str] = []
 
-    if data_quality.get("status") == "RED":
-        hard_failed.append("DATA_QUALITY_RED")
+    if data_status == "RED":
+        data_failed.append("DATA_QUALITY_RED")
+    elif data_status == "YELLOW":
+        warnings.append("DATA_QUALITY_YELLOW")
+
     if qty <= 0:
-        hard_failed.append("QTY_INVALID")
+        policy_hard_failed.append("QTY_INVALID")
     if atr <= 0:
-        hard_failed.append("ATR_INVALID")
+        policy_hard_failed.append("ATR_INVALID")
     if rr_net is None:
-        hard_failed.append("RR_UNAVAILABLE")
+        policy_hard_failed.append("RR_UNAVAILABLE")
     if earnings_days is not None and earnings_days < 3:
-        hard_failed.append("EARNINGS_LT_3D")
-
-    if hard_failed:
-        return {
-            "eligible": False,
-            "tier": None,
-            "hard_failed": hard_failed,
-            "softened": softened,
-            "model": "LAB_PAPER_TIERS_V2",
-        }
+        policy_hard_failed.append("EARNINGS_LT_3D")
 
     trigger_ok = str(trigger).upper() == "CONFIRMED"
     extension_atr = max(0.0, (price - max_buy) / atr) if atr > 0 else 99.0
     rr = float(rr_net or 0.0)
 
-    # A: near-production quality baseline.
-    if (
-        strategy_score >= 75
-        and trade_score >= 70
-        and trigger_ok
-        and rr >= 1.75
-        and extension_atr <= 0.0
-        and (earnings_days is None or earnings_days >= 7)
-    ):
-        return {
-            "eligible": True,
-            "tier": "A",
-            "hard_failed": [],
-            "softened": [],
-            "extension_atr": round(extension_atr, 3),
-            "model": "LAB_PAPER_TIERS_V2",
-        }
+    tier_a_failed: list[str] = []
+    if data_status != "GREEN":
+        tier_a_failed.append("DATA_NOT_GREEN_FOR_TIER_A")
+    if strategy_score < 75:
+        tier_a_failed.append("STRATEGY_SCORE_LT_75")
+    if trade_score < 70:
+        tier_a_failed.append("TRADE_SCORE_LT_70")
+    if not trigger_ok:
+        tier_a_failed.append("TRIGGER_NOT_CONFIRMED")
+    if rr < 1.75:
+        tier_a_failed.append("RR_LT_1_75")
+    if extension_atr > 0.0:
+        tier_a_failed.append("PRICE_ABOVE_MAX_BUY")
+    if earnings_days is not None and earnings_days < 7:
+        tier_a_failed.append("EARNINGS_LT_7D")
 
-    # B: qualified experiment. Keeps the trigger, accepts lower R/R and modest
-    # extension so we can measure whether the production gates are too strict.
-    if (
-        strategy_score >= 65
-        and trade_score >= 55
-        and trigger_ok
-        and rr >= 1.15
-        and extension_atr <= 0.50
-        and (earnings_days is None or earnings_days >= 5)
-    ):
-        softened.extend(["LOWER_SCORE_OR_RR_THAN_TIER_A", "EXTENSION_UP_TO_0_5_ATR"])
-        return {
-            "eligible": True,
-            "tier": "B",
-            "hard_failed": [],
-            "softened": softened,
-            "extension_atr": round(extension_atr, 3),
-            "model": "LAB_PAPER_TIERS_V2",
-        }
+    tier_b_failed: list[str] = []
+    if strategy_score < 65:
+        tier_b_failed.append("STRATEGY_SCORE_LT_65")
+    if trade_score < 55:
+        tier_b_failed.append("TRADE_SCORE_LT_55")
+    if not trigger_ok:
+        tier_b_failed.append("TRIGGER_NOT_CONFIRMED")
+    if rr < 1.15:
+        tier_b_failed.append("RR_LT_1_15")
+    if extension_atr > 0.50:
+        tier_b_failed.append("EXTENSION_GT_0_5_ATR")
+    if earnings_days is not None and earnings_days < 5:
+        tier_b_failed.append("EARNINGS_LT_5D")
 
-    # C: exploratory forward test. Trigger may still be WAITING. This is not a
-    # broker recommendation; it exists to learn whether early entries add value.
-    if (
-        strategy_score >= 55
-        and trade_score >= 40
-        and rr >= 0.75
-        and extension_atr <= 1.00
-    ):
-        softened.extend(["TRIGGER_MAY_BE_WAITING", "RR_MIN_0_75", "EXTENSION_UP_TO_1_ATR"])
-        return {
-            "eligible": True,
-            "tier": "C",
-            "hard_failed": [],
-            "softened": softened,
-            "extension_atr": round(extension_atr, 3),
-            "model": "LAB_PAPER_TIERS_V2",
-        }
-
-    failed: list[str] = []
+    tier_c_failed: list[str] = []
     if strategy_score < 55:
-        failed.append("STRATEGY_SCORE_LT_55")
+        tier_c_failed.append("STRATEGY_SCORE_LT_55")
     if trade_score < 40:
-        failed.append("TRADE_SCORE_LT_40")
+        tier_c_failed.append("TRADE_SCORE_LT_40")
     if rr < 0.75:
-        failed.append("RR_LT_0_75")
+        tier_c_failed.append("RR_LT_0_75")
     if extension_atr > 1.00:
-        failed.append("EXTENSION_GT_1_ATR")
-    if not failed:
-        failed.append("NO_TIER_MATCH")
+        tier_c_failed.append("EXTENSION_GT_1_ATR")
+
+    common_failed = data_failed + policy_hard_failed
+    checks = {
+        "A": _tier_check("A", list(dict.fromkeys(common_failed + tier_a_failed))),
+        "B": _tier_check("B", list(dict.fromkeys(common_failed + tier_b_failed))),
+        "C": _tier_check("C", list(dict.fromkeys(common_failed + tier_c_failed)), research_only=True),
+    }
+
+    selected: str | None = None
+    for tier in ("A", "B", "C"):
+        if checks[tier]["eligible"]:
+            selected = tier
+            break
+
+    if selected == "A":
+        safety_label = "PAPER_A_QUASI_PRODUCTION"
+        softened: list[str] = []
+    elif selected == "B":
+        safety_label = "PAPER_B_EXPERIMENTAL"
+        softened = ["LOWER_SCORE_OR_RR_THAN_TIER_A", "EXTENSION_UP_TO_0_5_ATR"]
+        if data_status == "YELLOW":
+            softened.append("DATA_QUALITY_YELLOW")
+    elif selected == "C":
+        safety_label = "RESEARCH_ONLY_NON_OPERATIONAL"
+        softened = ["TRIGGER_MAY_BE_WAITING", "RR_MIN_0_75", "EXTENSION_UP_TO_1_ATR"]
+        if data_status == "YELLOW":
+            softened.append("DATA_QUALITY_YELLOW")
+    else:
+        safety_label = "REJECTED_BY_PAPER_POLICY"
+        softened = []
+
+    selected_failed = checks[selected]["failed"] if selected else list(dict.fromkeys(common_failed + tier_c_failed))
 
     return {
-        "eligible": False,
-        "tier": None,
-        "hard_failed": failed,
+        "eligible": selected is not None,
+        "tier": selected,
+        "safety_label": safety_label,
+        "research_only": selected == "C",
+        "operational": False if selected == "C" else None,
+        "data_quality_status": data_status,
+        "data_gate_failures": data_failed,
+        "policy_hard_failures": policy_hard_failed,
+        "hard_failed": selected_failed,
         "softened": softened,
+        "warnings": warnings,
         "extension_atr": round(extension_atr, 3),
-        "model": "LAB_PAPER_TIERS_V2",
+        "tier_checks": checks,
+        "model": "LAB_PAPER_TIERS_V2_1",
     }
 
 
@@ -141,8 +166,9 @@ def lab_portfolio_fit(
     """Portfolio guardrail for research paper trading.
 
     The same ticker may be held by different strategies because comparing those
-    independent virtual trades is the point of the Laboratory. Only an existing
-    position for the same ticker+strategy is considered a duplicate.
+    independent virtual trades is the point of the Laboratory. The shared
+    underlying is retained through risk_key in signal/position details so a
+    future Portfolio Risk Engine can aggregate correlated exposure correctly.
     """
     failed: list[str] = []
     active = [
