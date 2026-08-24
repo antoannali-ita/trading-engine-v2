@@ -19,17 +19,8 @@ SLIPPAGE_BPS = 5.0
 
 
 def require_access() -> None:
-    expected = (os.getenv("DASHBOARD_PASSWORD") or "").strip()
-    if not expected or st.session_state.get("dashboard_auth"):
-        return
-    st.title("🔐 Trading Engine Control Center")
-    pwd = st.text_input("Password", type="password")
-    if st.button("Accedi", type="primary"):
-        if pwd == expected:
-            st.session_state["dashboard_auth"] = True
-            st.rerun()
-        st.error("Password non valida")
-    st.stop()
+    # Accesso temporaneamente sospeso. Manteniamo la funzione per poterlo riattivare facilmente.
+    return
 
 
 def j(v: Any) -> dict:
@@ -48,6 +39,21 @@ def pnl(entry, last, qty):
     if entry is None or last is None or qty is None: return None
     slip = SLIPPAGE_BPS / 10000
     return (last * (1-slip) - entry * (1+slip)) * qty - 2 * COMMISSION
+
+
+def fmt_table(frame: pd.DataFrame) -> pd.io.formats.style.Styler:
+    """Visualizzazione uniforme: prezzi/valuta e percentuali massimo 2 decimali."""
+    money_cols = {"Entry", "Prezzo/Exit", "Stop", "TP1", "TP2", "P&L netto $", "PnL_netto"}
+    pct_cols = {"Performance %", "Performance_media", "Win rate %"}
+    fmt: dict[str, str] = {}
+    for col in frame.columns:
+        if col in money_cols:
+            fmt[col] = "{:.2f}"
+        elif col in pct_cols:
+            fmt[col] = "{:.2f}%"
+        elif pd.api.types.is_float_dtype(frame[col]):
+            fmt[col] = "{:.2f}"
+    return frame.style.format(fmt, na_rep="-")
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_positions():
@@ -101,24 +107,26 @@ c=st.columns(6)
 c[0].metric("Aperte adesso",len(open_df)); c[1].metric("P&L aperto netto",f"${open_pnl:,.2f}")
 c[2].metric("Chiuse",len(closed_df)); c[3].metric("P&L chiuso netto",f"${closed_pnl:,.2f}")
 c[4].metric("Vinte / Perse",f"{closed_wins} / {closed_losses}")
-c[5].metric("Win rate",f"{win_rate:.1f}%" if win_rate is not None else "N/D")
+c[5].metric("Win rate",f"{win_rate:.2f}%" if win_rate is not None else "N/D")
 
 st.subheader("🟢 Cosa sta girando adesso")
 if open_df.empty: st.info("Nessuna posizione paper aperta.")
 else:
-    st.dataframe(open_df[["Ticker","Strategia","Tier","Entry","Prezzo/Exit","P&L netto $","Performance %","Stop","TP1","TP2","Esito","Apertura"]],width="stretch",hide_index=True)
+    shown_open=open_df[["Ticker","Strategia","Tier","Entry","Prezzo/Exit","P&L netto $","Performance %","Stop","TP1","TP2","Esito","Apertura"]]
+    st.dataframe(fmt_table(shown_open),width="stretch",hide_index=True)
     s=open_df.groupby("Strategia",dropna=False).agg(Posizioni=("Ticker","count"),PnL_netto=("P&L netto $","sum"),Performance_media=("Performance %","mean")).reset_index()
     st.markdown("#### Come stanno andando le strategie aperte")
-    st.dataframe(s.sort_values("PnL_netto",ascending=False),width="stretch",hide_index=True)
+    st.dataframe(fmt_table(s.sort_values("PnL_netto",ascending=False)),width="stretch",hide_index=True)
 
 st.subheader("🏁 Operazioni chiuse · risultati realizzati")
 if closed_df.empty: st.info("Nessuna operazione paper chiusa per ora.")
 else:
-    st.dataframe(closed_df[["Ticker","Strategia","Tier","Entry","Prezzo/Exit","P&L netto $","Performance %","Esito","Motivo chiusura","Apertura"]],width="stretch",hide_index=True)
+    shown_closed=closed_df[["Ticker","Strategia","Tier","Entry","Prezzo/Exit","P&L netto $","Performance %","Esito","Motivo chiusura","Apertura"]]
+    st.dataframe(fmt_table(shown_closed),width="stretch",hide_index=True)
     cs=closed_df.groupby("Strategia",dropna=False).agg(Trade=("Ticker","count"),Vinte=("P&L netto $",lambda x:int((x>0).sum())),Perse=("P&L netto $",lambda x:int((x<0).sum())),PnL_netto=("P&L netto $","sum"),Performance_media=("Performance %","mean")).reset_index()
     cs["Win rate %"]=cs["Vinte"]/cs["Trade"]*100
     st.markdown("#### Performance storica per strategia")
-    st.dataframe(cs.sort_values("PnL_netto",ascending=False),width="stretch",hide_index=True)
+    st.dataframe(fmt_table(cs.sort_values("PnL_netto",ascending=False)),width="stretch",hide_index=True)
 
 st.caption("P&L indicativo di ricerca: commissione $9,90 per lato + slippage 5 bps. Le pagine tecniche del Laboratory restano disponibili per analisi approfondite.")
 st.caption(f"Aggiornato: {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S %Z')}")
