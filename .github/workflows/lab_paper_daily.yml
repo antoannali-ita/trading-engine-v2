@@ -33,7 +33,7 @@ jobs:
           cache-dependency-path: laboratory/requirements.txt
       - run: pip install -r requirements.txt
       - run: pytest -q tests
-      - name: Generate Lab opportunities and paper lifecycle
-        run: python jobs/run_paper_signals.py
+      - name: Generate Lab V2 opportunities and paper lifecycle
+        run: python jobs/run_paper_signals_v2.py
       - name: Update signal outcomes D1-D60 MFE MAE
         run: python jobs/run_signal_outcomes.py
