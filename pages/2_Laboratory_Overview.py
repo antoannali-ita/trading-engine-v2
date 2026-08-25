@@ -26,6 +26,8 @@ except ModuleNotFoundError:
 
 st.set_page_config(page_title="Laboratory Overview", page_icon="🔬", layout="wide")
 
+NEAR_THRESHOLD_PCT = 2.0
+
 
 def j(v: Any) -> dict:
     if isinstance(v, dict):
@@ -128,12 +130,13 @@ def open_status(current: float | None, stop: float | None, tp1: float | None, tp
         return "TP1 HIT"
     if current is None:
         return "OPEN"
-    if stop is not None and current > stop and (current - stop) / current <= 0.02:
-        return "NEAR STOP"
-    if tp1 is not None and current < tp1 and (tp1 - current) / current <= 0.02:
-        return "NEAR TP1"
-    if tp2 is not None and current < tp2 and (tp2 - current) / current <= 0.02:
-        return "NEAR TP2"
+    threshold = NEAR_THRESHOLD_PCT / 100.0
+    if stop is not None and current > stop and (current - stop) / current <= threshold:
+        return f"NEAR STOP · ≤{NEAR_THRESHOLD_PCT:.1f}%"
+    if tp1 is not None and current < tp1 and (tp1 - current) / current <= threshold:
+        return f"NEAR TP1 · ≤{NEAR_THRESHOLD_PCT:.1f}%"
+    if tp2 is not None and current < tp2 and (tp2 - current) / current <= threshold:
+        return f"NEAR TP2 · ≤{NEAR_THRESHOLD_PCT:.1f}%"
     return "OPEN"
 
 
@@ -175,7 +178,7 @@ with st.sidebar:
     with st.expander("Come leggere i KPI"):
         st.markdown("**Capital Deployed** = capitale paper impegnato.  \n**Open Net P&L** = risultato aperto meno i soli costi già sostenuti all'ingresso.  \n**Open Risk** = perdita teorica dal prezzo attuale allo stop memorizzato.  \n**Realized Net P&L** = risultato netto delle operazioni già chiuse.  \n**Win Rate** = percentuale di trade chiusi in utile.")
     with st.expander("Come leggere la tabella"):
-        st.markdown("**Verde** = valore positivo. **Rosso** = valore negativo.  \n**Risk to Stop %** indica quanto manca allo stop.  \n**NEAR STOP / NEAR TP1 / NEAR TP2** significa che il prezzo è entro circa il 2% dal relativo livello.  \nNon viene mostrato TRAILING finché il motore non implementa davvero una logica trailing.")
+        st.markdown(f"**Verde** = valore positivo. **Rosso** = valore negativo.  \n**Risk to Stop %** indica quanto manca allo stop.  \n**NEAR STOP / NEAR TP1 / NEAR TP2** = distanza prezzo **≤ {NEAR_THRESHOLD_PCT:.1f}%** dal relativo livello; non è ATR-based.  \nNon viene mostrato TRAILING finché il motore non implementa davvero una logica trailing.")
     with st.expander("Costi e prezzi"):
         st.markdown(f"Costo corrente USA: **${CURRENT_COMMISSION_PER_SIDE:.2f} per lato** + **{SLIPPAGE_BPS:.0f} bps** di slippage. Scenario futuro: **${DISCOUNT_COMMISSION_PER_SIDE:.2f} per lato**. I prezzi OPEN seguono la gerarchia Yahoo live → DB → Entry fallback.")
 
@@ -279,6 +282,7 @@ if open_df.empty:
 else:
     shown = open_df[["Ticker", "Company", "Strategy", "Tier", "Current $", "Net P&L $", "Net %", "Risk to Stop %", "Open Risk $", "Status"]]
     st.dataframe(fmt(shown), width="stretch", hide_index=True)
+    st.caption(f"NEAR threshold: ≤ {NEAR_THRESHOLD_PCT:.1f}% price distance from Stop/TP1/TP2. Fixed price-distance rule; not ATR-based.")
     with st.expander("Cost Audit · Entry vs Estimated Exit Costs"):
         audit = open_df[["Ticker", "Company", "Source", "Price P&L $", "Entry Cost $", "Est. Exit Cost $", "Net P&L $"]]
         st.dataframe(fmt(audit), width="stretch", hide_index=True)
