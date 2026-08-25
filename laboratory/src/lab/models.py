@@ -15,6 +15,58 @@ class Decision(str, Enum):
     HIGH_CONVICTION = "HIGH_CONVICTION"
 
 
+class Side(str, Enum):
+    LONG = "LONG"
+    SHORT = "SHORT"
+
+
+class FillType(str, Enum):
+    ENTRY = "ENTRY"
+    TP1 = "TP1"
+    TP2 = "TP2"
+    STOP = "STOP"
+    MANUAL_EXIT = "MANUAL_EXIT"
+
+
+@dataclass(frozen=True)
+class ExecutionContract:
+    """Laboratory forward-test source of truth.
+
+    fill_price is the performance/risk anchor. ideal_entry is diagnostic only.
+    stop_initial defines initial R; stop_current defines remaining capital risk or
+    locked profit. The contract is deliberately independent from Production/Core.
+    """
+
+    side: Side
+    ideal_entry: float
+    fill_price: float
+    qty_initial: int
+    stop_initial: float
+    stop_current: float
+    atr14_at_entry: float | None
+    strategy: str
+    strategy_version: str
+    tier: str | None
+    policy_version: str | None
+    opened_at: datetime
+
+
+@dataclass(frozen=True)
+class PaperFill:
+    position_id: int
+    strategy: str
+    strategy_version: str
+    symbol: str
+    side: Side
+    fill_type: FillType
+    qty: int
+    price: float
+    commission: float = 0.0
+    slippage_bps: float | None = None
+    executed_at: datetime | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+
 @dataclass(frozen=True)
 class MarketRegime:
     trend: str  # bull | bear | sideways | unknown
