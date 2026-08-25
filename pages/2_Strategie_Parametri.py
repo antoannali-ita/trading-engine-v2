@@ -3,122 +3,92 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from common_utility.lab_cost_model import CURRENT_COMMISSION_PER_SIDE, DISCOUNT_COMMISSION_PER_SIDE, SLIPPAGE_BPS
+
 try:
     from dashboard import data_access
 except ModuleNotFoundError:
     import dashboard.data_access as data_access
 
-st.set_page_config(page_title="Strategie & Parametri", page_icon="🧠", layout="wide")
+st.set_page_config(page_title="Strategy Parameters", page_icon="🧠", layout="wide")
 
 ACTIVE = [
-    {
-        "Strategia":"trend_continuation","Stato":"🟢 ATTIVA","Holding gg":20,
-        "Cosa cerca":"Trend strutturale + pullback + momentum + volume + breakout",
-        "Score":"Trend 35 · Pullback 25 · Momentum 20 · Volume 10 · Breakout 10",
-        "Trigger":"Primario: Prezzo > SMA50 > SMA200",
-        "Esperimento":"Shadow buffer: 0% vs +0,5% sopra SMA50",
-    },
-    {
-        "Strategia":"cross_sectional_momentum","Stato":"🟢 ATTIVA","Holding gg":40,
-        "Cosa cerca":"Forza relativa rispetto all'intero universo nella stessa sessione",
-        "Score":"Percentile Ret20 30% · Ret60 35% · Ret120 35%",
-        "Trigger":"Prezzo >= massimo 20 giorni",
-        "Esperimento":"Score cross-sectional vero; non rendimenti assoluti",
-    },
-    {
-        "Strategia":"short_term_reversal_rsi45","Stato":"🟢 A/B TEST","Holding gg":10,
-        "Cosa cerca":"Reversal dopo eccesso ribassista moderato",
-        "Score":"RSI 45 · Stretch 30 · Trend lungo 15 · Stabilizzazione 10",
-        "Trigger":"Ret 1g > 0 e RSI14 < 45",
-        "Esperimento":"Confrontata separatamente con RSI35 attraverso A/B/C",
-    },
-    {
-        "Strategia":"short_term_reversal_rsi35","Stato":"🟢 A/B TEST","Holding gg":10,
-        "Cosa cerca":"Reversal dopo eccesso ribassista più estremo",
-        "Score":"RSI 45 · Stretch 30 · Trend lungo 15 · Stabilizzazione 10",
-        "Trigger":"Ret 1g > 0 e RSI14 < 35",
-        "Esperimento":"RSI score normalizzato sulla propria soglia; A/B/C separati",
-    },
-    {
-        "Strategia":"defensive_low_vol","Stato":"🟢 ATTIVA","Holding gg":60,
-        "Cosa cerca":"Bassa volatilità, stabilità, trend e momentum",
-        "Score":"Low vol 40 · Trend sopra SMA200 25 · Stabilità ATR 20 · Momentum 60g 15",
-        "Trigger":"Prezzo > SMA200",
-        "Esperimento":"Rinominata: nessun fondamentale 'quality' nello score",
-    },
+    {"Strategy":"trend_continuation","Status":"🟢 ACTIVE","Holding Days":20,"Version":"v2.0","Active From":"2026-08","What it looks for":"Structural trend + pullback + momentum + volume + breakout","Score":"Trend 35 · Pullback 25 · Momentum 20 · Volume 10 · Breakout 10","Trigger":"Primary: Price > SMA50 > SMA200","Experiment":"Shadow buffer: 0% vs +0.5% above SMA50"},
+    {"Strategy":"cross_sectional_momentum","Status":"🟢 ACTIVE","Holding Days":40,"Version":"v2.0","Active From":"2026-08","What it looks for":"Relative strength versus the same-session universe","Score":"Ret20 percentile 30% · Ret60 35% · Ret120 35%","Trigger":"Price >= 20-day high","Experiment":"True cross-sectional score; not absolute returns"},
+    {"Strategy":"short_term_reversal_rsi45","Status":"🟢 A/B TEST","Holding Days":10,"Version":"v2.0-r45","Active From":"2026-08","What it looks for":"Reversal after a moderate downside excess","Score":"RSI 45 · Stretch 30 · Long trend 15 · Stabilization 10","Trigger":"1d return > 0 and RSI14 < 45","Experiment":"Compared separately with RSI35 through A/B/C"},
+    {"Strategy":"short_term_reversal_rsi35","Status":"🟢 A/B TEST","Holding Days":10,"Version":"v2.0-r35","Active From":"2026-08","What it looks for":"Reversal after a more extreme downside excess","Score":"RSI 45 · Stretch 30 · Long trend 15 · Stabilization 10","Trigger":"1d return > 0 and RSI14 < 35","Experiment":"RSI score normalized to its own threshold; A/B/C kept separate"},
+    {"Strategy":"defensive_low_vol","Status":"🟢 ACTIVE","Holding Days":60,"Version":"v2.0","Active From":"2026-08","What it looks for":"Low volatility, stability, trend and momentum","Score":"Low vol 40 · Above SMA200 25 · ATR stability 20 · 60d momentum 15","Trigger":"Price > SMA200","Experiment":"Renamed: no fundamental quality component in the score"},
 ]
 
 NOT_ACTIVE = [
-    {"Strategia":"pead","Stato":"🟠 IMPLEMENTATA MA NON ATTIVA","Holding gg":20,"Manca":"point_in_time_earnings + analyst_revisions"},
-    {"Strategia":"event_driven_mean_reversion","Stato":"🟠 IMPLEMENTATA MA NON ATTIVA","Holding gg":10,"Manca":"point_in_time_events"},
-    {"Strategia":"quality_value_rerating","Stato":"🟠 IMPLEMENTATA MA NON ATTIVA","Holding gg":60,"Manca":"point_in_time_fundamentals"},
-    {"Strategia":"macro_intermarket","Stato":"🟠 IMPLEMENTATA MA NON ATTIVA","Holding gg":40,"Manca":"rates + credit_spreads + commodities + usd"},
+    {"Strategy":"pead","Status":"🟠 IMPLEMENTED, NOT ACTIVE","Holding Days":20,"Missing":"point_in_time_earnings + analyst_revisions"},
+    {"Strategy":"event_driven_mean_reversion","Status":"🟠 IMPLEMENTED, NOT ACTIVE","Holding Days":10,"Missing":"point_in_time_events"},
+    {"Strategy":"quality_value_rerating","Status":"🟠 IMPLEMENTED, NOT ACTIVE","Holding Days":60,"Missing":"point_in_time_fundamentals"},
+    {"Strategy":"macro_intermarket","Status":"🟠 IMPLEMENTED, NOT ACTIVE","Holding Days":40,"Missing":"rates + credit_spreads + commodities + usd"},
 ]
 
 TIERS = pd.DataFrame([
-    {"Tier":"A","Uso":"Quasi Production, sempre paper","Data Quality":"Solo GREEN","Strategy score min":75,"Trade score min":70,"Trigger":"CONFIRMED","R/R netto min":1.75,"Estensione max":"0 ATR sopra MaxBuy","Earnings":">= 7 giorni"},
-    {"Tier":"B","Uso":"Sperimentale","Data Quality":"GREEN/YELLOW","Strategy score min":65,"Trade score min":55,"Trigger":"CONFIRMED","R/R netto min":1.15,"Estensione max":"0,5 ATR","Earnings":">= 5 giorni"},
-    {"Tier":"C","Uso":"🔬 RESEARCH ONLY · NON OPERATIVO","Data Quality":"GREEN/YELLOW","Strategy score min":55,"Trade score min":40,"Trigger":"Può essere WAITING","R/R netto min":0.75,"Estensione max":"1 ATR","Earnings":"Hard veto < 3 giorni"},
+    {"Tier":"A","Use":"Near-Production, always paper","Data Quality":"GREEN only","Strategy Score Min":75,"Trade Score Min":70,"Trigger":"CONFIRMED","Net R/R Min":1.75,"Max Extension":"0 ATR above MaxBuy","Earnings":">= 7 days"},
+    {"Tier":"B","Use":"Experimental","Data Quality":"GREEN/YELLOW","Strategy Score Min":65,"Trade Score Min":55,"Trigger":"CONFIRMED","Net R/R Min":1.15,"Max Extension":"0.5 ATR","Earnings":">= 5 days"},
+    {"Tier":"C","Use":"🔬 RESEARCH ONLY · NON-OPERATIONAL","Data Quality":"GREEN/YELLOW","Strategy Score Min":55,"Trade Score Min":40,"Trigger":"May be WAITING","Net R/R Min":0.75,"Max Extension":"1 ATR","Earnings":"Hard veto < 3 days"},
 ])
 
-st.title("🧠 Strategie & Parametri")
-st.caption("Quali strategie stanno girando nel Laboratory, con quali regole, quali esperimenti A/B sono attivi e quali strategie aspettano ancora dati affidabili.")
+CHANGE_HISTORY = pd.DataFrame([
+    {"Date":"2026-08","Strategy":"trend_continuation","Version":"v2.0","Change":"Primary 0% SMA50 buffer retained; +0.5% recorded as shadow experiment"},
+    {"Date":"2026-08","Strategy":"short_term_reversal","Version":"v2.0-r35 / v2.0-r45","Change":"Split RSI35 and RSI45 into separately tracked variants"},
+    {"Date":"2026-08","Strategy":"cross_sectional_momentum","Version":"v2.0","Change":"Operational score changed to same-session cross-sectional percentiles"},
+    {"Date":"2026-08","Strategy":"defensive_low_vol","Version":"v2.0","Change":"Removed 'quality' naming because the score is technical, not fundamental"},
+])
+
+st.title("🧠 Strategy Parameters")
+st.caption("Configuration source of truth: what rules are running, which versions are active and which experiments are frozen before evaluation.")
 
 with st.sidebar:
-    st.markdown("## Guida · Strategie & Parametri")
-    st.markdown("""
-Questa pagina è l'**anagrafica del Laboratory**.
-
-### Cosa è cambiato nella V2
-- **Cross-sectional momentum**: il punteggio operativo viene calcolato con percentile Ret20/60/120 **rispetto all'universo nella stessa sessione**. Il breakout 20 giorni resta solo il trigger.
-- **Short-term reversal**: RSI35 e RSI45 sono due esperimenti distinti. Ognuno passa separatamente i gate A/B/C. Il peso RSI è normalizzato sulla propria soglia.
-- **Defensive low vol**: rimosso `quality` dal nome perché lo score è tecnico, non fondamentale.
-- **Trend continuation**: il trigger storico senza buffer resta primario; contemporaneamente registriamo lo shadow test con buffer +0,5% senza aprire una seconda posizione.
-- **Cooldown**: 7 sessioni per `ticker + strategia` prima di una nuova apertura paper dopo una posizione precedente.
-
-### Perché non ottimizziamo ogni settimana
-I parametri vengono fissati **prima** dell'esperimento. Un eventuale cambio futuro crea una nuova variante/versione, così non scegliamo a posteriori il parametro che fa apparire migliore il passato.
-
-### Holding
-`Holding gg` è l'orizzonte massimo/di ricerca previsto. Strategie con holding diversi non vanno confrontate soltanto con il PF grezzo: Research deve considerare anche capitale e tempo impegnato.
-
-### Tier A/B/C
-Ogni variante passa separatamente la stessa policy A/B/C. **Tier C resta RESEARCH ONLY e non operativo.**
-""")
+    st.markdown("## Strategy Parameters Guide")
+    st.markdown(
+        "This page is configuration-only. Performance belongs in Laboratory Overview / Research Evolution.\n\n"
+        "A parameter change must create a new strategy variant or version so results before and after the change can be compared without hindsight bias.\n\n"
+        "Tier C is always RESEARCH ONLY and never operational."
+    )
 
 try:
     signals = data_access.lab_paper_signals(10000)
 except Exception:
     signals = []
-
-seen = set(str(r.get("strategy")) for r in signals if r.get("strategy"))
+seen = {str(r.get("strategy")) for r in signals if r.get("strategy")}
 active_df = pd.DataFrame(ACTIVE)
-active_df["Visto nei dati"] = active_df["Strategia"].apply(lambda x: "✅ SI" if x in seen else "⚪ DAL PROSSIMO RUN")
+active_df["Seen in Data"] = active_df["Strategy"].apply(lambda x: "YES" if x in seen else "NEXT RUN")
 
-c1,c2,c3=st.columns(3)
-c1.metric("Strategie/varianti attive",len(ACTIVE))
-c2.metric("Strategie presenti ma non attive",len(NOT_ACTIVE))
-c3.metric("Totale registrate",len(ACTIVE)+len(NOT_ACTIVE))
+m = st.columns(3)
+m[0].metric("Active Strategies / Variants", len(ACTIVE))
+m[1].metric("Implemented, Not Active", len(NOT_ACTIVE))
+m[2].metric("Registered Total", len(ACTIVE) + len(NOT_ACTIVE))
 
-st.subheader("🟢 Strategie e varianti attive")
-st.dataframe(active_df,width="stretch",hide_index=True)
+st.subheader("Active Strategies and Variants")
+st.dataframe(active_df, width="stretch", hide_index=True)
+st.info("Experimental baseline is frozen. Do not change thresholds retrospectively without creating a new version.")
 
-st.info("Baseline sperimentale congelata: cooldown 7 sessioni; trend buffer 0% primario + 0,5% shadow; reversal RSI35/RSI45 in parallelo. Non modificare queste soglie a posteriori senza creare una nuova versione dell'esperimento.")
+st.subheader("A/B/C Admission Parameters")
+st.dataframe(TIERS, width="stretch", hide_index=True)
+st.caption("Common vetoes: Data Quality RED, qty <= 0, ATR <= 0, unavailable R/R, earnings < 3 days. Tier C remains non-operational.")
 
-st.subheader("⚙️ Parametri comuni di ammissione A/B/C")
-st.dataframe(TIERS,width="stretch",hide_index=True)
-st.caption("Veti comuni: Data Quality RED, qty <= 0, ATR <= 0, R/R non disponibile, earnings < 3 giorni. Tier C resta sempre non operativo.")
-
-st.markdown("### Limiti del portafoglio paper")
+st.subheader("Paper Portfolio Limits and Cost Model")
 st.dataframe(pd.DataFrame([
-    {"Parametro":"Max nuove aperture per run","Valore":12},
-    {"Parametro":"Max posizioni attive Laboratory","Valore":80},
-    {"Parametro":"Max posizioni attive per strategia","Valore":24},
-    {"Parametro":"Cooldown ticker + strategia","Valore":"7 sessioni"},
-    {"Parametro":"Commissione scenario Fineco per lato","Valore":"$9,90"},
-    {"Parametro":"Slippage di ricerca","Valore":"5 bps"},
-]),width="stretch",hide_index=True)
+    {"Parameter":"Max new openings per run","Value":12},
+    {"Parameter":"Max active Laboratory positions","Value":80},
+    {"Parameter":"Max active positions per strategy","Value":24},
+    {"Parameter":"Ticker + strategy cooldown","Value":"7 sessions"},
+    {"Parameter":"Current commission per side","Value":f"${CURRENT_COMMISSION_PER_SIDE:.2f}"},
+    {"Parameter":"Future discount scenario per side","Value":f"${DISCOUNT_COMMISSION_PER_SIDE:.2f}"},
+    {"Parameter":"Research slippage","Value":f"{SLIPPAGE_BPS:.0f} bps"},
+]), width="stretch", hide_index=True)
 
-st.subheader("💤 Strategie non ancora messe in campo")
-st.dataframe(pd.DataFrame(NOT_ACTIVE),width="stretch",hide_index=True)
-st.info("Queste quattro strategie non girano finché non disponiamo delle relative sorgenti point-in-time. Restano in attesa: non vengono surrogate con dati inventati o contemporanei.")
+with st.expander("Change History", expanded=False):
+    st.dataframe(CHANGE_HISTORY, width="stretch", hide_index=True)
+    st.caption("Research Evolution should compare evidence by strategy and version whenever enough observations exist.")
+
+st.subheader("Implemented but Not Active")
+st.dataframe(pd.DataFrame(NOT_ACTIVE), width="stretch", hide_index=True)
+st.info("These strategies remain disabled until their point-in-time data sources exist. They are not approximated with invented or contemporaneous substitutes.")
+
+st.caption("Question answered by this page: What rules are running?")
