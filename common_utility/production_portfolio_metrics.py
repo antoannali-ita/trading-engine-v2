@@ -28,6 +28,14 @@ def distance_pct(reference: Any, current: Any) -> float | None:
     return ((ref / cur) - 1.0) * 100.0
 
 
+def distance_to_stop_pct(current: Any, stop: Any) -> float | None:
+    cur = as_float(current)
+    stop_value = as_float(stop)
+    if cur in (None, 0) or stop_value is None:
+        return None
+    return ((cur - stop_value) / cur) * 100.0
+
+
 def pnl_pct(total_value: Any, total_cost: Any) -> float | None:
     value = as_float(total_value)
     cost = as_float(total_cost)
