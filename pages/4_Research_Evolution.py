@@ -98,6 +98,19 @@ def regime_name(details: dict) -> str:
     return str(raw or "UNKNOWN")
 
 
+def style_signed(frame: pd.DataFrame, cols: list[str]):
+    styler = frame.style
+    def color(v: Any) -> str:
+        value = f(v)
+        if value is None or value == 0:
+            return ""
+        return "color:#15803d;font-weight:700;" if value > 0 else "color:#dc2626;font-weight:700;"
+    for col in cols:
+        if col in frame.columns:
+            styler = styler.map(color, subset=[col])
+    return styler
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def load_data():
     return {
@@ -112,13 +125,21 @@ st.title("🧬 Research Evolution")
 st.caption("Evidence layer: what we are learning, which strategy/tier/version combinations are maturing, and whether experimental policy changes add value.")
 
 with st.sidebar:
-    st.markdown("## Research Guide")
-    st.markdown(
-        "**Maturity by Strategy × Tier × Version:** <10 UNDERTESTED, 10-29 EARLY, 30-49 DEVELOPING, >=50 EVALUABLE.\n\n"
-        "**CANDIDATE_REVIEW** means human review is justified. It is never an automatic Production promotion.\n\n"
-        "**PAPER_POLICY vs LEGACY_STRICT** is a first-class experiment: it asks whether trades admitted only by the new paper policy created evidence or noise.\n\n"
-        "PF = Profit Factor. R/R = Risk/Reward. Cost Drag = gross result minus modeled trading costs."
-    )
+    st.markdown("## Guida · Research Evolution")
+    with st.expander("A cosa serve", expanded=True):
+        st.markdown("Questa pagina risponde alla domanda: **cosa stiamo imparando dagli esperimenti?** Qui non si aprono trade e non si promuove automaticamente nulla in Production.")
+    with st.expander("Maturity"):
+        st.markdown("La maturità è misurata per **Strategy × Tier × Version**.  \n**UNDERTESTED** < 10 trade chiusi  \n**EARLY** 10-29  \n**DEVELOPING** 30-49  \n**EVALUABLE** >= 50.  \nUn campione piccolo non va trattato come una conclusione.")
+    with st.expander("PF, Return e Drawdown"):
+        st.markdown("**PF (Profit Factor)** > 1 significa che i guadagni lordi superano le perdite lorde.  \n**Avg Net Return** misura il ritorno medio netto.  \n**Max Drawdown** mostra la peggiore discesa cumulata del campione.  \nVerde = valore positivo; rosso = valore negativo dove il segno ha significato economico.")
+    with st.expander("PAPER_POLICY vs LEGACY_STRICT"):
+        st.markdown("È un esperimento centrale: confronta i trade ammessi dalla nuova **PAPER_POLICY** con quelli che la vecchia **LEGACY_STRICT** avrebbe accettato o rifiutato. Serve a capire se la nuova policy aggiunge opportunità utili o solo rumore.")
+    with st.expander("Shadow Outcomes"):
+        st.markdown("Osserviamo anche cosa succede ai segnali non aperti o rifiutati ma con dati validi. **MFE** misura quanto il trade sarebbe andato a favore; **MAE** quanto sarebbe andato contro.")
+    with st.expander("Overlap e Backtest"):
+        st.markdown("**Strategy Overlap** mostra quanto due strategie selezionano gli stessi ticker/sessioni. Un overlap alto non significa automaticamente duplicazione. I backtest sono solo contesto storico, non un verdetto operativo.")
+    with st.expander("CANDIDATE_REVIEW"):
+        st.markdown("Significa soltanto che c'è abbastanza evidenza per una **revisione umana**. Non equivale mai a promozione automatica in Production.")
 
 try:
     data = load_data()
@@ -193,7 +214,7 @@ else:
             "Evidence": indication,
         })
     rdf = pd.DataFrame(rows)
-    st.dataframe(rdf, width="stretch", hide_index=True)
+    st.dataframe(style_signed(rdf, ["Avg Net Return %", "Avg Return / 20 Sessions %", "Max Drawdown $"]), width="stretch", hide_index=True)
 
 st.subheader("Policy Experiment · PAPER_POLICY vs LEGACY_STRICT")
 policy_rows = []
@@ -222,7 +243,7 @@ if policy_rows:
         Paper_Only=("Paper Only", "sum"),
     ).reset_index()
     st.dataframe(summary, width="stretch", hide_index=True)
-    with st.expander("Policy comparison · signal detail"):
+    with st.expander("Policy Comparison · Signal Detail"):
         st.dataframe(pdf, width="stretch", hide_index=True)
     st.caption("Outcome quality for PAPER-only trades is evaluated below through shadow outcomes when enough observations exist.")
 else:
@@ -257,7 +278,7 @@ if shadow_rows:
         Avg_MFE_R=("MFE R", "mean"),
         Avg_MAE_R=("MAE R", "mean"),
     ).round(2)
-    st.dataframe(agg, width="stretch", hide_index=True)
+    st.dataframe(style_signed(agg, ["Avg_D1", "Avg_D5", "Avg_D20", "Avg_MFE_R", "Avg_MAE_R"]), width="stretch", hide_index=True)
 else:
     st.info("Shadow outcomes will appear after the outcome worker has accumulated observations.")
 
@@ -304,7 +325,8 @@ st.subheader("Historical Backtests · Context, Not Verdict")
 if backtests:
     bdf = pd.DataFrame(backtests)
     cols = [c for c in ["strategy", "symbol", "trades", "win_rate", "avg_return_pct", "profit_factor", "max_drawdown_pct", "created_at"] if c in bdf.columns]
-    st.dataframe(bdf[cols].head(500), width="stretch", hide_index=True)
+    shown = bdf[cols].head(500)
+    st.dataframe(style_signed(shown, ["avg_return_pct", "max_drawdown_pct"]), width="stretch", hide_index=True)
 else:
     st.info("No backtest records available.")
 
