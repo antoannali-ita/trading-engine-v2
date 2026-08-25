@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from .indicators import enrich_prices
+from .trend_fib_pullback import trend_fib_pullback_scores
 
 
 class DataRequired(RuntimeError):
@@ -99,6 +100,7 @@ def defensive_low_vol(df: pd.DataFrame) -> pd.Series:
 
 STRATEGIES: dict[str, StrategySpec] = {
     "trend_continuation": StrategySpec("trend_continuation", 20, trend_continuation),
+    "trend_fib_pullback_v1": StrategySpec("trend_fib_pullback_v1", 60, trend_fib_pullback_scores),
     "cross_sectional_momentum": StrategySpec("cross_sectional_momentum", 40, cross_sectional_momentum),
     "short_term_reversal_rsi45": StrategySpec("short_term_reversal_rsi45", 10, short_term_reversal_rsi45),
     "short_term_reversal_rsi35": StrategySpec("short_term_reversal_rsi35", 10, short_term_reversal_rsi35),
