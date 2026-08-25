@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterable
 
 COMMISSION_USD = 9.90
 SLIPPAGE_BPS = 5.0
@@ -14,6 +14,45 @@ def as_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _iso_date(value: Any) -> str | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return dt.date().isoformat()
+    except Exception:
+        text = str(value)
+        return text[:10] if len(text) >= 10 else None
+
+
+def date_label(value: Any) -> str:
+    iso = _iso_date(value)
+    if not iso:
+        return "N/D"
+    try:
+        return datetime.fromisoformat(iso).strftime("%d/%m/%Y")
+    except Exception:
+        return iso
+
+
+def trading_days_elapsed(opened_at: Any, ended_at: Any, market_sessions: Iterable[str]) -> int | None:
+    """Count completed market sessions after the opening date up to the end date.
+
+    Opening session is day 0. Example: Friday open -> Monday end = 1, assuming
+    both dates are actual sessions. The caller supplies authoritative market dates.
+    """
+    opened = _iso_date(opened_at)
+    ended = _iso_date(ended_at)
+    if not opened or not ended:
+        return None
+    if ended < opened:
+        return None
+    sessions = {str(day)[:10] for day in market_sessions if day}
+    if not sessions:
+        return None
+    return sum(1 for day in sessions if opened < day <= ended)
 
 
 def gross_price_pnl(entry: Any, current: Any, qty: Any) -> float | None:
@@ -84,13 +123,21 @@ def age_days(opened_at: Any, now: datetime | None = None) -> float | None:
         return None
 
 
-def open_trade_state(entry: Any, current: Any, qty: Any, opened_at: Any = None, early_days: float = 2.0) -> str:
+def open_trade_state(
+    entry: Any,
+    current: Any,
+    qty: Any,
+    opened_at: Any = None,
+    early_days: float = 2.0,
+    trading_days_open: int | None = None,
+) -> str:
     move = gross_price_return_pct(entry, current)
     band = cost_band_pct(entry, current, qty)
-    age = age_days(opened_at)
+    calendar_age = age_days(opened_at)
+    early = trading_days_open <= 2 if trading_days_open is not None else (calendar_age is None or calendar_age <= early_days)
     if move is None:
         return "⚪ OPEN · N/D"
-    if band is not None and abs(move) <= band and (age is None or age <= early_days):
+    if band is not None and abs(move) <= band and early:
         return "⚪ OPEN · TOO EARLY"
     if move > 0:
         return "🟢 OPEN · POSITIVE"
