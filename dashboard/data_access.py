@@ -83,8 +83,6 @@ def runs(limit: int = 500) -> list[dict[str, Any]]:
 
     valid: list[dict[str, Any]] = []
     for item in rows:
-        # Historical scheduler heartbeat rows without a real engine/run are not
-        # executions and only create blank rows in Operations -> Run & Log.
         if not item.get("engine_id") or not item.get("run_id"):
             continue
         row = dict(item)
@@ -109,7 +107,6 @@ def notifications(limit: int = 500) -> list[dict[str, Any]]:
     cleaned: list[dict[str, Any]] = []
     for item in rows:
         row = dict(item)
-        # CORE_REPORT is intentionally market/report-wide, so there may be no ticker.
         if not row.get("ticker"):
             row["ticker"] = "REPORT" if str(row.get("event_type") or "").upper() == "CORE_REPORT" else "N/D"
         if row.get("error_message") is None:
@@ -155,6 +152,10 @@ def lab_paper_events(limit: int = 2000) -> list[dict[str, Any]]:
     return safe_table_rows("lab_paper_events", order="created_at", limit=limit)
 
 
+def lab_paper_fills(limit: int = 5000) -> list[dict[str, Any]]:
+    return safe_table_rows("lab_paper_fills", order="executed_at", limit=limit)
+
+
 def lab_paper_signals(limit: int = 1000) -> list[dict[str, Any]]:
     return safe_table_rows("lab_paper_signals", order="created_at", limit=limit)
 
@@ -181,6 +182,64 @@ def lab_strategy_variants(limit: int = 1000) -> list[dict[str, Any]]:
 
 def lab_strategy_evaluations(limit: int = 5000) -> list[dict[str, Any]]:
     return safe_table_rows("lab_strategy_evaluations", order="created_at", limit=limit)
+
+
+def lab_aggregation_runs(limit: int = 200) -> list[dict[str, Any]]:
+    return safe_table_rows("lab_aggregation_runs", order="started_at", limit=limit)
+
+
+def lab_latest_completed_aggregation() -> dict[str, Any] | None:
+    try:
+        rows = (
+            get_client().table("lab_aggregation_runs")
+            .select("*")
+            .eq("status", "COMPLETED")
+            .order("completed_at", desc=True)
+            .limit(1)
+            .execute().data or []
+        )
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+def lab_control_snapshot() -> dict[str, Any] | None:
+    run = lab_latest_completed_aggregation()
+    if not run:
+        return None
+    rows = safe_table_rows(
+        "lab_control_snapshot_daily",
+        order="updated_at",
+        limit=1,
+        filters=[("eq", "aggregation_run_id", run.get("id"))],
+    )
+    return rows[0] if rows else None
+
+
+def lab_strategy_summaries(limit: int = 500) -> list[dict[str, Any]]:
+    run = lab_latest_completed_aggregation()
+    if not run:
+        return []
+    return safe_table_rows(
+        "lab_strategy_summary_daily",
+        order="strategy",
+        desc=False,
+        limit=limit,
+        filters=[("eq", "aggregation_run_id", run.get("id"))],
+    )
+
+
+def lab_strategy_ticker_snapshots(limit: int = 1000) -> list[dict[str, Any]]:
+    run = lab_latest_completed_aggregation()
+    if not run:
+        return []
+    return safe_table_rows(
+        "lab_strategy_ticker_snapshot",
+        order="strategy",
+        desc=False,
+        limit=limit,
+        filters=[("eq", "aggregation_run_id", run.get("id"))],
+    )
 
 
 def core_high_conviction(limit: int = 500) -> list[dict[str, Any]]:
