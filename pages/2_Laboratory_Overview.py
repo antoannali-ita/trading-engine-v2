@@ -45,37 +45,70 @@ def n(v: Any) -> float | None:
         return None
 
 
-def _extract_close(data: pd.DataFrame, ticker: str, count: int) -> float | None:
+def _series(data: pd.DataFrame, ticker: str, field: str, count: int) -> pd.Series:
+    if data is None or data.empty:
+        return pd.Series(dtype=float)
     try:
-        if data is None or data.empty:
-            return None
-        series = data["Close"].dropna() if count == 1 else data[(ticker, "Close")].dropna()
-        return float(series.iloc[-1]) if not series.empty else None
+        if count == 1:
+            return data[field].dropna()
+        return data[(ticker, field)].dropna()
     except Exception:
-        return None
+        return pd.Series(dtype=float)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def market_prices(tickers: tuple[str, ...]) -> dict[str, tuple[float, str]]:
+def market_snapshot(tickers: tuple[str, ...]) -> dict[str, dict[str, Any]]:
     if not tickers:
         return {}
-    out: dict[str, tuple[float, str]] = {}
+
+    out: dict[str, dict[str, Any]] = {}
     try:
-        intraday = yf.download(list(tickers), period="1d", interval="1m", auto_adjust=False, progress=False, group_by="ticker", threads=True)
+        intraday = yf.download(
+            list(tickers),
+            period="1d",
+            interval="1m",
+            auto_adjust=False,
+            progress=False,
+            group_by="ticker",
+            threads=True,
+        )
         for ticker in tickers:
-            px = _extract_close(intraday, ticker, len(tickers))
-            if px is not None:
-                out[ticker] = (px, "YAHOO 1M")
+            close = _series(intraday, ticker, "Close", len(tickers))
+            high = _series(intraday, ticker, "High", len(tickers))
+            low = _series(intraday, ticker, "Low", len(tickers))
+            if not close.empty:
+                out[ticker] = {
+                    "current": float(close.iloc[-1]),
+                    "day_low": float(low.min()) if not low.empty else None,
+                    "day_high": float(high.max()) if not high.empty else None,
+                    "source": "YAHOO 1M",
+                }
     except Exception:
         pass
+
     missing = tuple(t for t in tickers if t not in out)
     if missing:
         try:
-            daily = yf.download(list(missing), period="5d", interval="1d", auto_adjust=False, progress=False, group_by="ticker", threads=True)
+            daily = yf.download(
+                list(missing),
+                period="5d",
+                interval="1d",
+                auto_adjust=False,
+                progress=False,
+                group_by="ticker",
+                threads=True,
+            )
             for ticker in missing:
-                px = _extract_close(daily, ticker, len(missing))
-                if px is not None:
-                    out[ticker] = (px, "YAHOO CLOSE")
+                close = _series(daily, ticker, "Close", len(missing))
+                high = _series(daily, ticker, "High", len(missing))
+                low = _series(daily, ticker, "Low", len(missing))
+                if not close.empty:
+                    out[ticker] = {
+                        "current": float(close.iloc[-1]),
+                        "day_low": float(low.iloc[-1]) if not low.empty else None,
+                        "day_high": float(high.iloc[-1]) if not high.empty else None,
+                        "source": "YAHOO DAILY",
+                    }
         except Exception:
             pass
     return out
@@ -106,17 +139,22 @@ def yahoo_company_names(tickers: tuple[str, ...]) -> dict[str, str]:
     return out
 
 
-def effective_price(row: dict[str, Any], live: dict[str, tuple[float, str]]) -> tuple[float | None, str]:
+def effective_market(row: dict[str, Any], live: dict[str, dict[str, Any]]) -> dict[str, Any]:
     status = str(row.get("status") or "").upper()
-    if status == "CLOSED":
-        return n(row.get("exit_price")) or n(row.get("last_price")), "CLOSED"
     ticker = str(row.get("symbol") or "").upper()
+    if status == "CLOSED":
+        return {
+            "current": n(row.get("exit_price")) or n(row.get("last_price")),
+            "day_low": None,
+            "day_high": None,
+            "source": "CLOSED",
+        }
     if ticker in live:
         return live[ticker]
     db = n(row.get("last_price"))
     if db is not None:
-        return db, "DB FALLBACK"
-    return n(row.get("entry_price")), "ENTRY FALLBACK"
+        return {"current": db, "day_low": None, "day_high": None, "source": "DB FALLBACK"}
+    return {"current": n(row.get("entry_price")), "day_low": None, "day_high": None, "source": "ENTRY FALLBACK"}
 
 
 def tier_of(row: dict[str, Any]) -> str:
@@ -142,8 +180,13 @@ def open_status(current: float | None, stop: float | None, tp1: float | None, tp
 
 def fmt(frame: pd.DataFrame):
     formats: dict[str, str] = {}
+    money_cols = {
+        "Entry $", "Avg Cost $", "Current $", "Day Low $", "Day High $", "Market Value $",
+        "Net P&L $", "Capital $", "Open Risk $", "SL $", "TP1 $", "TP2 $",
+        "Price P&L $", "Entry Cost $", "Est. Exit Cost $",
+    }
     for c in frame.columns:
-        if c in {"Current $", "Net P&L $", "Capital $", "Open Risk $", "Stop $", "Price P&L $", "Entry Cost $", "Est. Exit Cost $"}:
+        if c in money_cols:
             formats[c] = "{:.2f}"
         elif "%" in c:
             formats[c] = "{:.2f}%"
@@ -169,16 +212,18 @@ def load_positions():
 
 
 st.title("🔬 Laboratory · Live Overview")
-st.caption("Executive paper-trading view: how the Laboratory is doing right now. PAPER only; no real broker orders are generated here.")
+st.caption("Executive paper-trading view: current positions, protection levels and market value. PAPER only; no real broker orders are generated here.")
 
 with st.sidebar:
     st.markdown("## Guida · Laboratory Overview")
     with st.expander("A cosa serve", expanded=True):
-        st.markdown("Questa è la pagina **più semplice** del Laboratory. Serve a capire rapidamente quante posizioni paper sono aperte, quanto capitale virtuale è impegnato, quanto stanno guadagnando/perdendo e quanto rischio resta fino agli stop.")
-    with st.expander("Come leggere i KPI"):
-        st.markdown("**Capital Deployed** = capitale paper impegnato.  \n**Open Net P&L** = risultato aperto meno i soli costi già sostenuti all'ingresso.  \n**Open Risk** = perdita teorica dal prezzo attuale allo stop memorizzato.  \n**Realized Net P&L** = risultato netto delle operazioni già chiuse.  \n**Win Rate** = percentuale di trade chiusi in utile.")
-    with st.expander("Come leggere la tabella"):
-        st.markdown(f"**Verde** = valore positivo. **Rosso** = valore negativo.  \n**Risk to Stop %** indica quanto manca allo stop.  \n**NEAR STOP / NEAR TP1 / NEAR TP2** = distanza prezzo **≤ {NEAR_THRESHOLD_PCT:.1f}%** dal relativo livello; non è ATR-based.  \nNon viene mostrato TRAILING finché il motore non implementa davvero una logica trailing.")
+        st.markdown("Questa pagina funziona come una vista portafoglio semplificata: per ogni posizione vedi **prezzo di carico, prezzo attuale, valore di mercato, minimo/massimo del giorno, stop e target**, oltre al P&L.")
+    with st.expander("Come leggere la tabella principale"):
+        st.markdown("**Entry $** = prezzo di ingresso paper.  \n**Avg Cost $** = prezzo medio di carico; oggi coincide con Entry perché ogni paper position nasce con un solo ingresso.  \n**Current $** = ultimo prezzo disponibile.  \n**Day Low / Day High** = minimo e massimo della seduta disponibili da Yahoo.  \n**Market Value $** = Current × Qty.  \n**SL / TP1 / TP2** = livelli di protezione e obiettivi correnti.")
+    with st.expander("Come leggere utile/perdita e rischio"):
+        st.markdown("**Verde** = valore positivo. **Rosso** = valore negativo.  \n**Open Net P&L** sottrae solo i costi già sostenuti all'ingresso.  \n**Risk to Stop %** indica quanto dista il prezzo dallo stop.  \n**Open Risk $** è la perdita teorica dal prezzo attuale allo stop memorizzato.")
+    with st.expander("Come leggere Status"):
+        st.markdown(f"**NEAR STOP / NEAR TP1 / NEAR TP2** = distanza prezzo **≤ {NEAR_THRESHOLD_PCT:.1f}%** dal relativo livello.  \n**TP1 HIT** = primo target già raggiunto.  \nNon viene mostrato TRAILING finché il motore non implementa davvero una logica trailing.")
     with st.expander("Costi e prezzi"):
         st.markdown(f"Costo corrente USA: **${CURRENT_COMMISSION_PER_SIDE:.2f} per lato** + **{SLIPPAGE_BPS:.0f} bps** di slippage. Scenario futuro: **${DISCOUNT_COMMISSION_PER_SIDE:.2f} per lato**. I prezzi OPEN seguono la gerarchia Yahoo live → DB → Entry fallback.")
 
@@ -195,7 +240,7 @@ if not positions:
 open_pos = [p for p in positions if str(p.get("status") or "").upper() in {"OPEN", "TP1_HIT"}]
 closed_pos = [p for p in positions if str(p.get("status") or "").upper() == "CLOSED"]
 open_symbols = tuple(sorted({str(p.get("symbol") or "").upper() for p in open_pos if p.get("symbol")}))
-live = market_prices(open_symbols)
+live = market_snapshot(open_symbols)
 
 stored_names = {
     str(p.get("symbol") or "").upper(): _stored_company_name(p)
@@ -208,24 +253,33 @@ company_names = {**yahoo_names, **stored_names}
 
 rows: list[dict[str, Any]] = []
 capital_deployed = 0.0
+market_value_total = 0.0
 open_risk_total = 0.0
 open_net_total = 0.0
 for p in open_pos:
     ticker = str(p.get("symbol") or "").upper()
     entry = n(p.get("entry_price"))
+    avg_cost = n(p.get("avg_cost")) or n(p.get("average_cost")) or entry
     qty = n(p.get("qty"))
-    current, source = effective_price(p, live)
+    snap = effective_market(p, live)
+    current = n(snap.get("current"))
+    day_low = n(snap.get("day_low"))
+    day_high = n(snap.get("day_high"))
+    source = str(snap.get("source") or "N/D")
     stop = n(p.get("stop_current")) or n(p.get("stop_initial"))
     tp1 = n(p.get("tp1"))
     tp2 = n(p.get("tp2"))
-    capital = (entry * qty) if entry is not None and qty is not None else None
-    price_pnl = open_price_pnl(entry, current, qty)
-    net = open_net_pnl(entry, current, qty)
+    capital = (avg_cost * qty) if avg_cost is not None and qty is not None else None
+    market_value = (current * qty) if current is not None and qty is not None else None
+    price_pnl = open_price_pnl(avg_cost, current, qty)
+    net = open_net_pnl(avg_cost, current, qty)
     net_pct = (net / capital * 100.0) if net is not None and capital else None
     risk = max((current - stop) * qty, 0.0) if None not in (current, stop, qty) else None
     risk_pct = ((current - stop) / current * 100.0) if current and stop is not None else None
     if capital is not None:
         capital_deployed += capital
+    if market_value is not None:
+        market_value_total += market_value
     if risk is not None:
         open_risk_total += risk
     if net is not None:
@@ -235,18 +289,26 @@ for p in open_pos:
         "Company": company_names.get(ticker, "N/D"),
         "Strategy": p.get("strategy"),
         "Tier": tier_of(p),
+        "Qty": qty,
+        "Entry $": entry,
+        "Avg Cost $": avg_cost,
         "Current $": current,
+        "Day Low $": day_low,
+        "Day High $": day_high,
+        "Market Value $": market_value,
         "Net P&L $": net,
         "Net %": net_pct,
-        "Capital $": capital,
-        "Stop $": stop,
+        "SL $": stop,
+        "TP1 $": tp1,
+        "TP2 $": tp2,
         "Risk to Stop %": risk_pct,
         "Open Risk $": risk,
         "Status": open_status(current, stop, tp1, tp2, str(p.get("status") or "").upper()),
         "Source": source,
         "Price P&L $": price_pnl,
-        "Entry Cost $": entry_cost(entry, qty),
+        "Entry Cost $": entry_cost(avg_cost, qty),
         "Est. Exit Cost $": estimated_exit_cost(current, qty),
+        "Capital $": capital,
     })
 
 closed_net_values = []
@@ -262,13 +324,14 @@ for p in closed_pos:
 realized_total = sum(closed_net_values)
 win_rate = 100.0 * wins / len(closed_net_values) if closed_net_values else None
 
-k = st.columns(6)
+k = st.columns(7)
 k[0].metric("Open Positions", len(open_pos))
 k[1].metric("Capital Deployed", f"${capital_deployed:,.2f}")
-k[2].metric("Open Net P&L", f"${open_net_total:,.2f}")
-k[3].metric("Open Risk", f"${open_risk_total:,.2f}")
-k[4].metric("Realized Net P&L", f"${realized_total:,.2f}")
-k[5].metric("Win Rate", f"{win_rate:.2f}%" if win_rate is not None else "N/D")
+k[2].metric("Market Value", f"${market_value_total:,.2f}")
+k[3].metric("Open Net P&L", f"${open_net_total:,.2f}")
+k[4].metric("Open Risk", f"${open_risk_total:,.2f}")
+k[5].metric("Realized Net P&L", f"${realized_total:,.2f}")
+k[6].metric("Win Rate", f"{win_rate:.2f}%" if win_rate is not None else "N/D")
 
 if open_net_total > 0:
     st.success(f"Open P&L is positive: +${open_net_total:,.2f}")
@@ -280,11 +343,19 @@ open_df = pd.DataFrame(rows)
 if open_df.empty:
     st.info("No open paper positions.")
 else:
-    shown = open_df[["Ticker", "Company", "Strategy", "Tier", "Current $", "Net P&L $", "Net %", "Risk to Stop %", "Open Risk $", "Status"]]
+    shown = open_df[[
+        "Ticker", "Company", "Strategy", "Tier", "Qty",
+        "Entry $", "Avg Cost $", "Current $", "Day Low $", "Day High $",
+        "Market Value $", "Net P&L $", "Net %",
+        "SL $", "TP1 $", "TP2 $", "Risk to Stop %", "Status",
+    ]]
     st.dataframe(fmt(shown), width="stretch", hide_index=True)
-    st.caption(f"NEAR threshold: ≤ {NEAR_THRESHOLD_PCT:.1f}% price distance from Stop/TP1/TP2. Fixed price-distance rule; not ATR-based.")
-    with st.expander("Cost Audit · Entry vs Estimated Exit Costs"):
-        audit = open_df[["Ticker", "Company", "Source", "Price P&L $", "Entry Cost $", "Est. Exit Cost $", "Net P&L $"]]
+    st.caption("Fineco-style summary without Bid/Ask/Volume. Day Low/High use the available Yahoo session snapshot; '-' means the daily range could not be verified from the current feed.")
+    with st.expander("Risk & Cost Audit"):
+        audit = open_df[[
+            "Ticker", "Source", "Capital $", "Open Risk $", "Price P&L $",
+            "Entry Cost $", "Est. Exit Cost $", "Net P&L $",
+        ]]
         st.dataframe(fmt(audit), width="stretch", hide_index=True)
         st.caption("Open Net P&L uses only entry costs already incurred. Estimated exit costs are shown separately and are not used for the open status badge.")
 
@@ -293,10 +364,17 @@ if not open_df.empty:
     s = open_df.groupby("Strategy", dropna=False).agg(
         Open=("Ticker", "count"),
         Capital=("Capital $", "sum"),
+        Market_Value=("Market Value $", "sum"),
         Net_PnL=("Net P&L $", "sum"),
         Avg_Return=("Net %", "mean"),
         Open_Risk=("Open Risk $", "sum"),
-    ).reset_index().rename(columns={"Capital": "Capital $", "Net_PnL": "Net P&L $", "Avg_Return": "Avg Return %", "Open_Risk": "Open Risk $"})
+    ).reset_index().rename(columns={
+        "Capital": "Capital $",
+        "Market_Value": "Market Value $",
+        "Net_PnL": "Net P&L $",
+        "Avg_Return": "Avg Return %",
+        "Open_Risk": "Open Risk $",
+    })
     st.dataframe(fmt(s.sort_values("Net P&L $", ascending=False)), width="stretch", hide_index=True)
 
 st.caption("Question answered by this page: How is the Laboratory doing right now?")
