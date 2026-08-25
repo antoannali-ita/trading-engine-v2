@@ -11,11 +11,13 @@ import yfinance as yf
 
 from common_utility.production_portfolio_metrics import (
     as_float,
-    distance_pct,
     distance_to_stop_pct,
     invested_pct,
     pnl_pct,
     risk_to_stop_usd,
+    target_distance_pct,
+    target_gap_usd,
+    target_status,
     usd_to_eur,
     weight_pct,
 )
@@ -85,6 +87,25 @@ def _pnl_color(v: Any) -> str:
     return ""
 
 
+def _target_color(v: Any) -> str:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return ""
+    if x >= 0:
+        return "color: #21c55d; font-weight: 700;"
+    return "color: #ef4444; font-weight: 700;"
+
+
+def _target_status_color(v: Any) -> str:
+    text = str(v or "")
+    if "TARGET HIT" in text:
+        return "color: #21c55d; font-weight: 800;"
+    if "BELOW TARGET" in text:
+        return "color: #ef4444; font-weight: 700;"
+    return ""
+
+
 def _status_label(v: Any) -> str:
     try:
         x = float(v)
@@ -101,7 +122,7 @@ def _production_style(frame: pd.DataFrame):
     fmt: dict[str, str] = {}
     money_cols = {
         "Average Price $", "Current Price $", "Value $", "Value €", "P&L $", "P&L €",
-        "Stop $", "Risk to Stop $", "Target $",
+        "Stop $", "Risk to Stop $", "Target $", "Target Gap $",
     }
     pct_cols = {"P&L %", "Distance to Stop %", "Distance to Target %", "Weight %"}
     fx_cols = {"Average USD/EUR", "Current USD/EUR", "Target USD/EUR"}
@@ -109,11 +130,16 @@ def _production_style(frame: pd.DataFrame):
         if col in money_cols or col in fx_cols:
             fmt[col] = "{:.2f}"
         elif col in pct_cols:
-            fmt[col] = "{:.2f}"
+            fmt[col] = "{:+.2f}"
     styler = frame.style.format(fmt, na_rep="-")
     pnl_subset = [c for c in ["P&L $", "P&L €", "P&L %"] if c in frame.columns]
     if pnl_subset:
         styler = styler.map(_pnl_color, subset=pnl_subset)
+    target_subset = [c for c in ["Distance to Target %", "Target Gap $"] if c in frame.columns]
+    if target_subset:
+        styler = styler.map(_target_color, subset=target_subset)
+    if "Target Status" in frame.columns:
+        styler = styler.map(_target_status_color, subset=["Target Status"])
     return styler
 
 
@@ -128,7 +154,6 @@ prices = _live_prices(tickers)
 usd_eur_live, fx_source = _usd_eur_rate()
 refresh_time = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
 
-# If live FX is unavailable, use the configured snapshot only as a clearly labelled fallback.
 fx_snapshot = None
 if fx_positions:
     fx_snapshot = as_float(fx_positions[0].get("snapshot_rate_eur_per_usd"))
@@ -152,7 +177,9 @@ for r in equities:
     position_pnl_pct = pnl_pct(value_usd, cost_usd)
     value_eur = usd_to_eur(value_usd, usd_eur)
     pnl_eur = usd_to_eur(pnl_usd, usd_eur)
-    dist_target = distance_pct(target, px)
+    dist_target = target_distance_pct(px, target)
+    gap_target = target_gap_usd(px, target)
+    target_state = target_status(px, target)
     dist_stop = distance_to_stop_pct(px, stop)
     risk_stop = risk_to_stop_usd(qty, px, stop)
     rows.append({
@@ -174,6 +201,8 @@ for r in equities:
         "Risk to Stop $": risk_stop,
         "Target $": target,
         "Distance to Target %": dist_target,
+        "Target Gap $": gap_target,
+        "Target Status": target_state,
         "Position State": "OPEN" if qty > 0 else "CLOSED",
     })
 
@@ -191,7 +220,6 @@ if not df.empty:
     total_pnl_usd = float(df["P&L $"].sum())
     total_pnl_pct = pnl_pct(total_usd, total_cost_usd)
     total_eur = usd_to_eur(total_usd, usd_eur)
-    total_pnl_eur = usd_to_eur(total_pnl_usd, usd_eur)
     winners = int((df["P&L $"] > 0).sum())
     losers = int((df["P&L $"] < 0).sum())
 
@@ -274,6 +302,15 @@ with st.sidebar:
             - `LIVE` / `LIVE 5M` = dato recuperato dal mercato.
             - `EOD` = ultimo dato giornaliero.
             - `SNAPSHOT` = fallback configurato.
+            """
+        )
+    with st.expander("Target tracking", expanded=False):
+        st.markdown(
+            """
+            - `Distance to Target %` è negativa e rossa finché il prezzo è sotto il Target.
+            - Diventa positiva e verde quando il Target è stato superato.
+            - `Target Gap $` mostra quanti dollari mancano (`-`) oppure di quanto il prezzo è sopra il Target (`+`).
+            - `🎯 TARGET HIT` segnala che il prezzo corrente ha raggiunto o superato il Target configurato.
             """
         )
     with st.expander("FX & concentration", expanded=False):
