@@ -1,0 +1,37 @@
+name: Laboratory CI
+
+on:
+  push:
+    branches: [strategy-lab-v1]
+    paths:
+      - "laboratory/**"
+      - ".github/workflows/laboratory_ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONPATH: ${{ github.workspace }}/laboratory/src
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: strategy-lab-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: laboratory/requirements.txt
+      - name: Install Laboratory dependencies
+        working-directory: laboratory
+        run: pip install -r requirements.txt
+      - name: Compile Laboratory Python
+        working-directory: laboratory
+        run: python -m compileall -q src jobs tests
+      - name: Run Laboratory tests
+        working-directory: laboratory
+        run: pytest -q tests
