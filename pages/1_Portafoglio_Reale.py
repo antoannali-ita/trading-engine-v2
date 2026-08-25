@@ -40,10 +40,7 @@ def _live_prices(tickers: tuple[str, ...]) -> dict[str, float]:
     out: dict[str, float] = {}
     for ticker in tickers:
         try:
-            if len(tickers) == 1:
-                series = data["Close"].dropna()
-            else:
-                series = data[(ticker, "Close")].dropna()
+            series = data["Close"].dropna() if len(tickers) == 1 else data[(ticker, "Close")].dropna()
             if not series.empty:
                 out[ticker] = float(series.iloc[-1])
         except Exception:
@@ -76,25 +73,17 @@ def _usd_eur_rate() -> tuple[float | None, str]:
 
 
 def _pnl_color(v: Any) -> str:
-    try:
-        x = float(v)
-    except (TypeError, ValueError):
+    x = as_float(v)
+    if x is None or x == 0:
         return ""
-    if x > 0:
-        return "color: #21c55d; font-weight: 700;"
-    if x < 0:
-        return "color: #ef4444; font-weight: 700;"
-    return ""
+    return "color: #21c55d; font-weight: 700;" if x > 0 else "color: #ef4444; font-weight: 700;"
 
 
 def _target_color(v: Any) -> str:
-    try:
-        x = float(v)
-    except (TypeError, ValueError):
+    x = as_float(v)
+    if x is None:
         return ""
-    if x >= 0:
-        return "color: #21c55d; font-weight: 700;"
-    return "color: #ef4444; font-weight: 700;"
+    return "color: #21c55d; font-weight: 700;" if x >= 0 else "color: #ef4444; font-weight: 700;"
 
 
 def _target_status_color(v: Any) -> str:
@@ -107,9 +96,8 @@ def _target_status_color(v: Any) -> str:
 
 
 def _status_label(v: Any) -> str:
-    try:
-        x = float(v)
-    except (TypeError, ValueError):
+    x = as_float(v)
+    if x is None:
         return "⚪ N/D"
     if x > 0:
         return "🟢 PROFIT"
@@ -122,7 +110,7 @@ def _production_style(frame: pd.DataFrame):
     fmt: dict[str, str] = {}
     money_cols = {
         "Average Price $", "Current Price $", "Value $", "Value €", "P&L $", "P&L €",
-        "Stop $", "Risk to Stop $", "Target $", "Target Gap $",
+        "Stop $", "Risk to Stop $", "Target $", "Target Gap $", "Native Price",
     }
     pct_cols = {"P&L %", "Distance to Stop %", "Distance to Target %", "Weight %"}
     fx_cols = {"Average USD/EUR", "Current USD/EUR", "Target USD/EUR"}
@@ -132,12 +120,12 @@ def _production_style(frame: pd.DataFrame):
         elif col in pct_cols:
             fmt[col] = "{:+.2f}"
     styler = frame.style.format(fmt, na_rep="-")
-    pnl_subset = [c for c in ["P&L $", "P&L €", "P&L %"] if c in frame.columns]
-    if pnl_subset:
-        styler = styler.map(_pnl_color, subset=pnl_subset)
-    target_subset = [c for c in ["Distance to Target %", "Target Gap $"] if c in frame.columns]
-    if target_subset:
-        styler = styler.map(_target_color, subset=target_subset)
+    for subset, fn in [
+        ([c for c in ["P&L $", "P&L €", "P&L %"] if c in frame.columns], _pnl_color),
+        ([c for c in ["Distance to Target %", "Target Gap $"] if c in frame.columns], _target_color),
+    ]:
+        if subset:
+            styler = styler.map(fn, subset=subset)
     if "Target Status" in frame.columns:
         styler = styler.map(_target_status_color, subset=["Target Status"])
     return styler
@@ -154,9 +142,7 @@ prices = _live_prices(tickers)
 usd_eur_live, fx_source = _usd_eur_rate()
 refresh_time = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
 
-fx_snapshot = None
-if fx_positions:
-    fx_snapshot = as_float(fx_positions[0].get("snapshot_rate_eur_per_usd"))
+fx_snapshot = as_float(fx_positions[0].get("snapshot_rate_eur_per_usd")) if fx_positions else None
 usd_eur = usd_eur_live if usd_eur_live is not None else fx_snapshot
 if usd_eur_live is None and usd_eur is not None:
     fx_source = "SNAPSHOT"
@@ -164,9 +150,27 @@ if usd_eur_live is None and usd_eur is not None:
 rows = []
 for r in equities:
     ticker = str(r["ticker"]).upper()
-    live = prices.get(ticker)
-    source = "LIVE" if live is not None else "SNAPSHOT"
-    px = live if live is not None else float(r["snapshot_price_usd"])
+    quote_currency = str(r.get("quote_currency") or "USD").upper()
+    live_native = prices.get(ticker)
+    snapshot_usd = float(r["snapshot_price_usd"])
+
+    if live_native is not None and quote_currency == "EUR":
+        if usd_eur is not None and usd_eur > 0:
+            px = live_native / usd_eur
+            source = "LIVE EUR→USD"
+        else:
+            px = snapshot_usd
+            source = "SNAPSHOT FX N/D"
+        native_price = live_native
+    elif live_native is not None:
+        px = live_native
+        native_price = live_native
+        source = "LIVE"
+    else:
+        px = snapshot_usd
+        native_price = as_float(r.get("snapshot_price_native")) or snapshot_usd
+        source = "SNAPSHOT"
+
     qty = float(r["quantity"])
     avg = float(r["avg_price_usd"])
     target = float(r["target_usd"])
@@ -177,18 +181,16 @@ for r in equities:
     position_pnl_pct = pnl_pct(value_usd, cost_usd)
     value_eur = usd_to_eur(value_usd, usd_eur)
     pnl_eur = usd_to_eur(pnl_usd, usd_eur)
-    dist_target = target_distance_pct(px, target)
-    gap_target = target_gap_usd(px, target)
-    target_state = target_status(px, target)
-    dist_stop = distance_to_stop_pct(px, stop)
-    risk_stop = risk_to_stop_usd(qty, px, stop)
+
     rows.append({
         "Ticker": ticker,
         "Company": r.get("name", ""),
         "Market": r.get("market", ""),
+        "Quote": quote_currency,
         "Qty": qty,
         "Average Price $": avg,
         "Current Price $": px,
+        "Native Price": native_price,
         "Source": source,
         "Value $": value_usd,
         "Value €": value_eur,
@@ -197,12 +199,12 @@ for r in equities:
         "P&L %": position_pnl_pct,
         "Status": _status_label(pnl_usd),
         "Stop $": stop,
-        "Distance to Stop %": dist_stop,
-        "Risk to Stop $": risk_stop,
+        "Distance to Stop %": distance_to_stop_pct(px, stop),
+        "Risk to Stop $": risk_to_stop_usd(qty, px, stop),
         "Target $": target,
-        "Distance to Target %": dist_target,
-        "Target Gap $": gap_target,
-        "Target Status": target_state,
+        "Distance to Target %": target_distance_pct(px, target),
+        "Target Gap $": target_gap_usd(px, target),
+        "Target Status": target_status(px, target),
         "Position State": "OPEN" if qty > 0 else "CLOSED",
     })
 
@@ -222,7 +224,6 @@ if not df.empty:
     total_eur = usd_to_eur(total_usd, usd_eur)
     winners = int((df["P&L $"] > 0).sum())
     losers = int((df["P&L $"] < 0).sum())
-
     df["Weight %"] = df["Value $"].map(lambda v: weight_pct(v, total_usd))
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
@@ -258,8 +259,7 @@ if not df.empty:
     st.dataframe(_production_style(show), width="stretch", hide_index=True)
 
     st.subheader("Position Concentration")
-    concentration = df[["Ticker", "Value $", "Value €", "Weight %"]].copy()
-    concentration = concentration.sort_values("Weight %", ascending=False)
+    concentration = df[["Ticker", "Value $", "Value €", "Weight %"]].copy().sort_values("Weight %", ascending=False)
     st.dataframe(_production_style(concentration), width="stretch", hide_index=True)
 
 if fx_positions:
@@ -272,7 +272,6 @@ if fx_positions:
         target = float(r["target_rate_eur_per_usd"])
         value_eur = qty_usd * rate
         pnl_eur = qty_usd * (rate - avg)
-        fx_pnl_pct = pnl_pct(rate, avg)
         fx_rows.append({
             "Pair": "USD/EUR",
             "USD": qty_usd,
@@ -281,7 +280,7 @@ if fx_positions:
             "Source": fx_source,
             "Value €": value_eur,
             "P&L €": pnl_eur,
-            "P&L %": fx_pnl_pct,
+            "P&L %": pnl_pct(rate, avg),
             "Status": _status_label(pnl_eur),
             "Target USD/EUR": target,
         })
@@ -293,49 +292,17 @@ with st.sidebar:
     st.header("Guide · Production Portfolio")
     with st.expander("What this page shows", expanded=True):
         st.markdown(
-            """
-            Questa pagina mostra **capitale reale** e resta separata da Laboratory e paper trading.
-
-            - 🟢 `PROFIT` = posizione in guadagno.
-            - 🔴 `LOSS` = posizione in perdita.
-            - `FLAT` = posizione sostanzialmente invariata.
-            - `LIVE` / `LIVE 5M` = dato recuperato dal mercato.
-            - `EOD` = ultimo dato giornaliero.
-            - `SNAPSHOT` = fallback configurato.
-            """
+            "Questa pagina mostra **capitale reale** e resta separata da Laboratory e paper trading. "
+            "`LIVE EUR→USD` indica un titolo quotato in euro convertito in USD con il cambio corrente."
         )
     with st.expander("Target tracking", expanded=False):
-        st.markdown(
-            """
-            - `Distance to Target %` è negativa e rossa finché il prezzo è sotto il Target.
-            - Diventa positiva e verde quando il Target è stato superato.
-            - `Target Gap $` mostra quanti dollari mancano (`-`) oppure di quanto il prezzo è sopra il Target (`+`).
-            - `🎯 TARGET HIT` segnala che il prezzo corrente ha raggiunto o superato il Target configurato.
-            """
-        )
+        st.markdown("`Distance to Target %` e `Target Gap $` misurano la distanza dal target configurato. `TARGET HIT` indica target raggiunto o superato.")
     with st.expander("FX & concentration", expanded=False):
-        st.markdown(
-            """
-            - `USD/EUR` indica quanti euro vale 1 dollaro e viene usato per il controvalore in euro.
-            - `Weight %` misura la concentrazione della singola posizione sul valore totale delle azioni.
-            """
-        )
+        st.markdown("`USD/EUR` indica quanti euro vale 1 dollaro. `Weight %` misura la concentrazione della posizione sul totale azionario.")
     with st.expander("Risk fields", expanded=False):
-        st.markdown(
-            """
-            - `Stop`, `Distance to Stop %` e `Portfolio Heat` vengono calcolati solo se gli stop sono presenti in configurazione.
-            - Nessuno stop viene inventato quando il dato manca.
-            - `Qty` è la quantità residua effettivamente ancora in portafoglio.
-            """
-        )
+        st.markdown("Stop e Portfolio Heat sono calcolati solo quando lo stop è presente. Nessuno stop viene inventato.")
     with st.expander("Portfolio maintenance", expanded=False):
-        st.markdown(
-            """
-            Vendite parziali riducono `Qty`; la posizione resta `OPEN` finché Qty > 0.
-            Target e Average Price derivano dalla configurazione/fotografia fornita.
-            Laboratory Control, Paper Portfolio e Research non modificano questa pagina.
-            """
-        )
+        st.markdown("Quantità, Average Price, Target, valuta di quotazione e snapshot derivano da `config/production_portfolio.json`.")
 
 st.info(
     "Per aggiornare quantità residue, Average Price, Target, Stop o aggiungere/rimuovere posizioni si modifica "
