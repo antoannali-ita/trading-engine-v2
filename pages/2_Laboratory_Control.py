@@ -8,9 +8,6 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from common_utility.lab_cost_model import CURRENT_COMMISSION_PER_SIDE, SLIPPAGE_BPS
-from common_utility.lab_dashboard_metrics import open_net_pnl
-
 try:
     from dashboard import data_access
 except ModuleNotFoundError:
@@ -18,12 +15,42 @@ except ModuleNotFoundError:
 
 st.set_page_config(page_title="Laboratory Control", page_icon="🔬", layout="wide")
 
+VERDICT_ICON = {
+    "WORKING": "🟢",
+    "EARLY": "🟡",
+    "WATCH": "🟠",
+    "WEAK": "🔴",
+    "DATA_ISSUE": "🔴",
+}
+
+GATE_LABELS = {
+    "STRATEGY_SCORE_LT_75": "Score below Tier A",
+    "STRATEGY_SCORE_LT_65": "Score below Tier B",
+    "STRATEGY_SCORE_LT_55": "Score below Tier C",
+    "TRADE_SCORE_LT_70": "Trade score too low",
+    "TRADE_SCORE_LT_55": "Trade score too low",
+    "TRADE_SCORE_LT_40": "Trade score too low",
+    "TRIGGER_NOT_CONFIRMED": "Trigger not confirmed",
+    "PRICE_ABOVE_MAX_BUY": "Price above buy zone",
+    "EXTENSION_GT_0_5_ATR": "Too extended",
+    "EXTENSION_GT_1_ATR": "Too extended",
+    "RR_LT_1_75": "Risk/reward below Tier A",
+    "RR_LT_1_15": "Risk/reward below Tier B",
+    "RR_LT_0_75": "Risk/reward below Tier C",
+    "EARNINGS_LT_3D": "Earnings too close",
+    "EARNINGS_LT_5D": "Earnings too close",
+    "EARNINGS_LT_7D": "Earnings too close",
+    "DATA_QUALITY_RED": "Data quality issue",
+    "DATA_NOT_GREEN_FOR_TIER_A": "Data not green for Tier A",
+}
+
 
 def j(v: Any) -> dict:
     if isinstance(v, dict):
         return v
     try:
-        return json.loads(str(v)) if v else {}
+        parsed = json.loads(str(v)) if v else {}
+        return parsed if isinstance(parsed, dict) else {}
     except Exception:
         return {}
 
@@ -35,173 +62,309 @@ def n(v: Any) -> float | None:
         return None
 
 
-def session_of(row: dict[str, Any]) -> str | None:
-    value = row.get("signal_date") or row.get("source_signal_date") or row.get("created_at") or row.get("opened_at")
-    return str(value)[:10] if value else None
+def gate_label(code: Any) -> str:
+    value = str(code or "N/D").upper()
+    return GATE_LABELS.get(value, value.replace("_", " ").title())
 
 
-def tier_of(row: dict[str, Any]) -> str:
-    d = j(row.get("details"))
-    policy = j(d.get("paper_policy"))
-    return str(d.get("paper_tier") or policy.get("tier") or "N/D")
-
-
-def gate_rows(signal: dict[str, Any]) -> list[dict[str, str]]:
-    d = j(signal.get("details"))
-    policy = j(d.get("paper_policy"))
-    out: list[dict[str, str]] = []
-    for gate in policy.get("data_gate_failures", []) or []:
-        out.append({"Family": "DATA", "Policy": "PAPER_POLICY", "Tier": "ALL", "Gate": str(gate)})
-    for gate in policy.get("policy_hard_failures", []) or []:
-        out.append({"Family": "POLICY", "Policy": "PAPER_POLICY", "Tier": "ALL", "Gate": str(gate)})
-    checks = policy.get("tier_checks") or {}
-    if isinstance(checks, dict):
-        for tier, check in checks.items():
-            if isinstance(check, dict):
-                for gate in check.get("failed", []) or []:
-                    out.append({"Family": "DATA" if str(gate).startswith("DATA_") else "POLICY", "Policy": "PAPER_POLICY", "Tier": str(tier), "Gate": str(gate)})
-    strict = j(d.get("strict_trade_eligibility") or d.get("trade_eligibility"))
-    for gate in strict.get("failed", []) or []:
-        out.append({"Family": "DATA" if "DATA" in str(gate) else "POLICY", "Policy": "LEGACY_STRICT", "Tier": "LEGACY", "Gate": str(gate)})
-    return out
-
-
-def style_signed(frame: pd.DataFrame, cols: list[str]):
+def signed_style(frame: pd.DataFrame, columns: list[str]):
     styler = frame.style
+
     def color(v: Any) -> str:
         value = n(v)
         if value is None or value == 0:
             return ""
         return "color:#15803d;font-weight:700;" if value > 0 else "color:#dc2626;font-weight:700;"
-    for col in cols:
+
+    for col in columns:
         if col in frame.columns:
             styler = styler.map(color, subset=[col])
     return styler
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def load_data():
+def load_snapshots():
     return {
-        "signals": data_access.lab_paper_signals(10000),
-        "positions": data_access.lab_paper_positions(10000),
+        "run": data_access.lab_latest_completed_aggregation(),
+        "control": data_access.lab_control_snapshot(),
+        "strategies": data_access.lab_strategy_summaries(500),
+        "tickers": data_access.lab_strategy_ticker_snapshots(1000),
     }
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def load_raw_signals():
+    return data_access.lab_paper_signals(10000)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_raw_positions():
+    return data_access.lab_paper_positions(10000)
+
+
+def raw_session(row: dict[str, Any]) -> str | None:
+    value = row.get("signal_date") or row.get("created_at")
+    return str(value)[:10] if value else None
+
+
+def raw_tier(row: dict[str, Any]) -> str:
+    d = j(row.get("details"))
+    policy = j(d.get("paper_policy"))
+    return str(d.get("paper_tier") or policy.get("tier") or "N/D")
+
+
+def raw_fallback() -> tuple[dict[str, Any] | None, list[dict[str, Any]], list[dict[str, Any]]]:
+    signals = load_raw_signals()
+    positions = load_raw_positions()
+    sessions = sorted({x for x in (raw_session(r) for r in signals) if x})
+    if not sessions:
+        return None, [], []
+    latest = sessions[-1]
+    cur = [r for r in signals if raw_session(r) == latest]
+    tiers = Counter(raw_tier(r) for r in cur)
+    open_pos = [p for p in positions if str(p.get("status") or "").upper() in {"OPEN", "TP1_HIT"}]
+    control = {
+        "session": latest,
+        "run_status": "TRANSITION",
+        "data_status": "N/D",
+        "raw_freshness_status": "N/D",
+        "lifecycle_freshness_status": "N/D",
+        "snapshot_freshness_status": "MISSING",
+        "signals": len(cur),
+        "data_valid": len([r for r in cur if str(j(j(r.get("details")).get("data_quality")).get("status") or "").upper() != "RED"]),
+        "valid_setups": len([r for r in cur if (n(j(r.get("details")).get("strategy_score")) or n(r.get("score")) or 0) >= 55]),
+        "triggered": len([r for r in cur if str(j(r.get("details")).get("trigger") or "").upper() == "CONFIRMED"]),
+        "tier_a": tiers.get("A", 0),
+        "tier_b": tiers.get("B", 0),
+        "tier_c": tiers.get("C", 0),
+        "paper_opened": len([r for r in cur if str(r.get("status") or "").upper() == "PAPER_OPEN"]),
+        "open_positions": len(open_pos),
+        "closed_positions": len([p for p in positions if str(p.get("status") or "").upper() == "CLOSED"]),
+        "data_rejects": len([r for r in cur if str(r.get("status") or "").upper() == "BLOCKED_DATA"]),
+        "mtm_r": None,
+        "open_risk_r": None,
+        "locked_profit_r": None,
+        "paper_net_pnl": None,
+    }
+    ticker_rows = []
+    for p in open_pos:
+        d = j(p.get("details"))
+        ticker_rows.append({
+            "strategy": p.get("strategy"),
+            "symbol": p.get("symbol"),
+            "tier": d.get("paper_tier") or j(d.get("paper_policy")).get("tier"),
+            "state": p.get("status"),
+            "fill_price": p.get("entry_price"),
+            "current_price": p.get("last_price") or p.get("entry_price"),
+            "net_return_pct": p.get("return_pct"),
+            "mtm_r": None,
+            "open_risk_r": None,
+        })
+    return control, [], ticker_rows
+
+
+def technical_gate_rows(signal: dict[str, Any], selector: str) -> list[str]:
+    details = j(signal.get("details"))
+    policy = j(details.get("paper_policy"))
+    if selector == "Legacy Strict":
+        strict = j(details.get("strict_trade_eligibility") or details.get("trade_eligibility"))
+        return [str(x) for x in strict.get("failed", []) or []]
+    checks = j(policy.get("tier_checks"))
+    tier = selector.replace("Tier ", "")
+    check = j(checks.get(tier))
+    return [str(x) for x in check.get("failed", []) or []]
+
+
 st.title("🔬 Laboratory Control")
-st.caption("Technical control room: signal flow, tier conversion, blocking gates and session-to-session changes. PAPER only.")
+st.caption("5-second control room: system health, signal flow, strategy state, active tickers and blockers. PAPER research only.")
 
 with st.sidebar:
     st.markdown("## Guida · Laboratory Control")
     with st.expander("A cosa serve", expanded=True):
-        st.markdown("Questa pagina spiega **perché il motore sta producendo certi segnali e certi paper trade**. Non sostituisce la Overview: qui guardiamo soprattutto diagnostica, Tier, conversione e blocchi.")
-    with st.expander("Tier A / B / C"):
-        st.markdown("**Tier A** = candidato quasi Production, ma ancora paper.  \n**Tier B** = esperimento controllato.  \n**Tier C** = ricerca soltanto, mai operativo.")
-    with st.expander("Come leggere i Gates"):
-        st.markdown("**DATA** = problema o mancanza nei dati.  \n**POLICY** = regola non superata, per esempio score, trigger, R/R, Max Buy o earnings.  \nLa tabella **Top Blocking Gates** mostra quali blocchi stanno fermando più spesso i segnali.")
-    with st.expander("Last Session vs Previous"):
-        st.markdown("Confronta l'ultimo run con quello precedente. Serve per capire se aumentano segnali, Tier o rifiuti. Il segno +/− non è sempre buono o cattivo: per esempio meno Data Rejects è positivo.")
-    with st.expander("Open P&L Health"):
-        st.markdown("È solo un **controllo tecnico rapido**. Verde = P&L aperto positivo, rosso = negativo. Il dettaglio economico vero resta in Laboratory Overview / Paper Portfolio.")
+        st.markdown("La Control deve rispondere subito a tre domande: **il Laboratory sta girando? dove si fermano i segnali? quali strategie/titoli richiedono attenzione?**")
+    with st.expander("Come leggere System Health"):
+        st.markdown("**RUNNING** solo quando la pipeline fino allo snapshot è coerente. Raw Data, Lifecycle e Snapshot hanno freshness separata. Se manca lo snapshot 2.2 viene mostrato un fallback transitorio, chiaramente segnalato.")
+    with st.expander("Come leggere Strategy Health"):
+        st.markdown("**WORKING / EARLY / WATCH / WEAK / DATA ISSUE** arrivano dal backend e sono versionati. **EARLY** significa campione insufficiente: un PF alto non basta.")
+    with st.expander("Tier e Blockers"):
+        st.markdown("A/B/C sono **policy parallele**. La classifica principale dei blocker usa **Tier A** e almeno 20 segnali rifiutati; sotto il minimo mostra N/D.")
+    with st.expander("Metriche R"):
+        st.markdown("**MTM R** = risultato aperto normalizzato. **Open Risk R** = capitale ancora a rischio. **Locked R** = profitto già protetto dallo stop. Il P&L in dollari è secondario.")
 
-try:
-    data = load_data()
-except Exception as exc:
-    st.error(f"Unable to read Laboratory data: {type(exc).__name__}: {exc}")
-    st.stop()
+snap = load_snapshots()
+control = snap["control"]
+strategies = snap["strategies"]
+tickers = snap["tickers"]
+run = snap["run"]
+using_snapshot = control is not None and run is not None
 
-signals = data["signals"]
-positions = data["positions"]
-sessions = sorted({x for x in (session_of(r) for r in signals) if x})
-latest = sessions[-1] if sessions else None
-previous = sessions[-2] if len(sessions) > 1 else None
-cur = [r for r in signals if session_of(r) == latest] if latest else []
-prev = [r for r in signals if session_of(r) == previous] if previous else []
-cur_pos = [p for p in positions if session_of(p) == latest] if latest else []
-open_pos = [p for p in positions if str(p.get("status") or "").upper() in {"OPEN", "TP1_HIT"}]
-cur_tier = Counter(tier_of(r) for r in cur)
-cur_status = Counter(str(r.get("status") or "N/D").upper() for r in cur)
-prev_tier = Counter(tier_of(r) for r in prev)
-prev_status = Counter(str(r.get("status") or "N/D").upper() for r in prev)
+if not using_snapshot:
+    control, strategies, tickers = raw_fallback()
+    if control is None:
+        st.warning("No Laboratory data available yet.")
+        st.stop()
+    st.warning("Laboratory 2.2 snapshot not available yet. Transitional raw fallback is active; normalized R/verdict metrics remain N/D until the snapshot pipeline is online.")
 
-open_pnl_health = 0.0
-for p in open_pos:
-    value = open_net_pnl(
-        p.get("entry_price"),
-        p.get("last_price") or p.get("entry_price"),
-        p.get("qty"),
-        CURRENT_COMMISSION_PER_SIDE,
-        SLIPPAGE_BPS,
-    )
-    open_pnl_health += value or 0.0
+session = str(control.get("session") or "N/D")
+run_status = str(control.get("run_status") or "N/D").upper()
+raw_fresh = str(control.get("raw_freshness_status") or "N/D").upper()
+life_fresh = str(control.get("lifecycle_freshness_status") or "N/D").upper()
+snap_fresh = str(control.get("snapshot_freshness_status") or "N/D").upper()
 
-if latest:
-    st.success(f"LAB ACTIVE · Last session {latest} · {len(cur)} signals · {len(cur_pos)} new paper trades")
+health_ok = using_snapshot and run_status == "OK" and raw_fresh == "FRESH" and life_fresh in {"FRESH", "N/D"} and snap_fresh == "FRESH"
+health_text = f"{'🟢 LAB RUNNING' if health_ok else '🟠 LAB ATTENTION'} · Session {session} · Raw {raw_fresh} · Lifecycle {life_fresh} · Snapshot {snap_fresh}"
+if health_ok:
+    st.success(health_text)
 else:
-    st.warning("No Laboratory session available.")
+    st.warning(health_text)
 
+st.subheader("Run Snapshot")
 k = st.columns(6)
-k[0].metric("Signals Last Run", len(cur))
-k[1].metric("New Paper Trades", len(cur_pos))
-k[2].metric("Tier A", cur_tier.get("A", 0))
-k[3].metric("Tier B", cur_tier.get("B", 0))
-k[4].metric("Tier C", cur_tier.get("C", 0))
-k[5].metric("Data Rejects", cur_status.get("BLOCKED_DATA", 0))
+k[0].metric("Signals", int(control.get("signals") or 0))
+k[1].metric("Paper Opened", int(control.get("paper_opened") or 0))
+k[2].metric("Tier A", int(control.get("tier_a") or 0))
+k[3].metric("Tier B", int(control.get("tier_b") or 0))
+k[4].metric("Tier C", int(control.get("tier_c") or 0))
+k[5].metric("Data Rejects", int(control.get("data_rejects") or 0))
 
-if open_pnl_health > 0:
-    st.success(f"Engineering Health · Open P&L: +${open_pnl_health:,.2f}")
-elif open_pnl_health < 0:
-    st.error(f"Engineering Health · Open P&L: -${abs(open_pnl_health):,.2f}")
+r = st.columns(4)
+r[0].metric("Open MTM R", f"{n(control.get('mtm_r')):+.2f}R" if n(control.get("mtm_r")) is not None else "N/D")
+r[1].metric("Open Risk R", f"{n(control.get('open_risk_r')):.2f}R" if n(control.get("open_risk_r")) is not None else "N/D")
+r[2].metric("Locked Profit R", f"{n(control.get('locked_profit_r')):+.2f}R" if n(control.get("locked_profit_r")) is not None else "N/D")
+r[3].metric("Paper P&L $", f"${n(control.get('paper_net_pnl')):,.2f}" if n(control.get("paper_net_pnl")) is not None else "N/D")
+
+st.subheader("Signal Flow")
+funnel_cols = st.columns(5)
+flow = [
+    ("Signals", int(control.get("signals") or 0)),
+    ("Data Valid", int(control.get("data_valid") or 0)),
+    ("Valid Setups", int(control.get("valid_setups") or 0)),
+    ("Triggered", int(control.get("triggered") or 0)),
+    ("Paper Opened", int(control.get("paper_opened") or 0)),
+]
+for col, (label, value) in zip(funnel_cols, flow):
+    col.metric(label, value)
+st.caption(f"Parallel policy branches from Research Candidates: Tier A {int(control.get('tier_a') or 0)} · Tier B {int(control.get('tier_b') or 0)} · Tier C {int(control.get('tier_c') or 0)}. A/B/C are not sequential gates.")
+
+st.subheader("Strategy Health")
+if strategies:
+    active_by_strategy: dict[str, list[str]] = {}
+    for row in tickers:
+        strategy = str(row.get("strategy") or "N/D")
+        symbol = str(row.get("symbol") or "N/D")
+        active_by_strategy.setdefault(strategy, []).append(symbol)
+    rows = []
+    for s in strategies:
+        verdict = str(s.get("verdict") or "N/D").upper()
+        rows.append({
+            "Strategy": s.get("strategy"),
+            "Verdict": f"{VERDICT_ICON.get(verdict, '⚪')} {verdict}",
+            "Maturity": s.get("maturity") or "N/D",
+            "Closed": s.get("closed"),
+            "Exp R": n(s.get("expectancy_r")),
+            "PF": n(s.get("net_pf")),
+            "MTM R": n(s.get("mtm_r")),
+            "DD R": n(s.get("max_drawdown_r")),
+            "Open": s.get("open"),
+            "Active Tickers": ", ".join(sorted(set(active_by_strategy.get(str(s.get("strategy")), [])))) or "-",
+        })
+    sdf = pd.DataFrame(rows)
+    formats = {"Exp R": "{:+.2f}", "PF": "{:.2f}", "MTM R": "{:+.2f}", "DD R": "{:+.2f}"}
+    styled = signed_style(sdf, ["Exp R", "MTM R", "DD R"]).format(formats, na_rep="-")
+    st.dataframe(styled, width="stretch", hide_index=True)
 else:
-    st.info("Engineering Health · Open P&L: $0.00")
+    st.info("Strategy verdicts are waiting for the 2.2 snapshot layer.")
 
-st.subheader("Last Session vs Previous")
-if previous:
-    delta_rows = [
-        {"Metric": "Signals", "Current": len(cur), "Previous": len(prev), "Delta": len(cur) - len(prev)},
-        {"Metric": "Tier A", "Current": cur_tier.get("A", 0), "Previous": prev_tier.get("A", 0), "Delta": cur_tier.get("A", 0) - prev_tier.get("A", 0)},
-        {"Metric": "Tier B", "Current": cur_tier.get("B", 0), "Previous": prev_tier.get("B", 0), "Delta": cur_tier.get("B", 0) - prev_tier.get("B", 0)},
-        {"Metric": "Tier C", "Current": cur_tier.get("C", 0), "Previous": prev_tier.get("C", 0), "Delta": cur_tier.get("C", 0) - prev_tier.get("C", 0)},
-        {"Metric": "Data Rejects", "Current": cur_status.get("BLOCKED_DATA", 0), "Previous": prev_status.get("BLOCKED_DATA", 0), "Delta": cur_status.get("BLOCKED_DATA", 0) - prev_status.get("BLOCKED_DATA", 0)},
-    ]
-    st.dataframe(pd.DataFrame(delta_rows), width="stretch", hide_index=True)
+st.subheader("Active Tickers")
+if tickers:
+    tdf = pd.DataFrame([{
+        "Ticker": x.get("symbol"),
+        "Strategy": x.get("strategy"),
+        "Tier": x.get("tier") or "N/D",
+        "State": x.get("state") or "N/D",
+        "Days": x.get("trading_days"),
+        "Fill $": n(x.get("fill_price")),
+        "Current $": n(x.get("current_price")),
+        "Net %": n(x.get("net_return_pct")),
+        "MTM R": n(x.get("mtm_r")),
+        "Risk R": n(x.get("open_risk_r")),
+    } for x in tickers])
+    styler = signed_style(tdf, ["Net %", "MTM R"]).format({"Fill $": "{:.2f}", "Current $": "{:.2f}", "Net %": "{:+.2f}%", "MTM R": "{:+.2f}", "Risk R": "{:.2f}"}, na_rep="-")
+    st.dataframe(styler, width="stretch", hide_index=True)
 else:
-    st.info("A previous session is not available yet.")
+    st.info("No active paper positions.")
 
-st.subheader("Strategy Diagnostics")
-strategies = sorted({str(r.get("strategy")) for r in signals if r.get("strategy")} | {str(p.get("strategy")) for p in positions if p.get("strategy")})
-summary = []
-for strategy in strategies:
-    current_signals = [r for r in cur if str(r.get("strategy")) == strategy]
-    all_positions = [p for p in positions if str(p.get("strategy")) == strategy]
-    open_s = [p for p in all_positions if str(p.get("status") or "").upper() in {"OPEN", "TP1_HIT"}]
-    closed_s = [p for p in all_positions if str(p.get("status") or "").upper() == "CLOSED"]
-    opened_current = [p for p in cur_pos if str(p.get("strategy")) == strategy]
-    conversion = 100.0 * len(opened_current) / len(current_signals) if current_signals else None
-    closed_pnls = [n(p.get("net_pnl")) for p in closed_s]
-    valid = [x for x in closed_pnls if x is not None]
-    win_rate = 100.0 * sum(1 for x in valid if x > 0) / len(valid) if valid else None
-    summary.append({"Strategy": strategy,"Signals": len(current_signals),"Paper Trades": len(opened_current),"Conversion %": conversion,"Open": len(open_s),"Closed": len(closed_s),"Win Rate %": win_rate})
-if summary:
-    sdf = pd.DataFrame(summary)
-    st.dataframe(sdf.style.format({"Conversion %": "{:.2f}%", "Win Rate %": "{:.2f}%"}, na_rep="-"), width="stretch", hide_index=True)
-
-st.subheader("Top Blocking Gates")
-gates: list[dict[str, str]] = []
-for signal in cur:
-    gates.extend(gate_rows(signal))
-if gates:
-    gdf = pd.DataFrame(gates)
-    top = gdf.groupby(["Family", "Policy", "Gate"], as_index=False).size().rename(columns={"size": "Count"}).sort_values("Count", ascending=False)
-    st.dataframe(top.head(30), width="stretch", hide_index=True)
-    with st.expander("Gate Detail by Tier"):
-        st.dataframe(gdf, width="stretch", hide_index=True)
+st.subheader("Why Signals Are Blocked · Tier A")
+if strategies:
+    blocker_rows = []
+    for s in strategies:
+        code = s.get("main_blocker")
+        sample = int(s.get("blocker_sample") or 0)
+        pct = n(s.get("main_blocker_pct"))
+        if code and sample >= 20 and pct is not None:
+            estimated_count = int(round(sample * pct / 100.0))
+            blocker_rows.append({"Blocker": gate_label(code), "Count": estimated_count})
+    if blocker_rows:
+        bdf = pd.DataFrame(blocker_rows).groupby("Blocker", as_index=False)["Count"].sum().sort_values("Count", ascending=False).head(5)
+        st.bar_chart(bdf.set_index("Blocker")["Count"], horizontal=True)
+        st.dataframe(bdf, width="stretch", hide_index=True)
+    else:
+        st.info("N/D: fewer than 20 rejected valid signals per strategy in the 20-session blocker window, or no Tier A blocker is available.")
 else:
-    st.info("No blocking gates were recorded in the latest session.")
+    st.info("Blocker summary is waiting for snapshots.")
 
-st.subheader("Current Signal Mix")
-if cur:
-    mix = pd.DataFrame([{"Strategy": r.get("strategy"),"Ticker": r.get("symbol") or r.get("ticker"),"Tier": tier_of(r),"Status": r.get("status")} for r in cur])
-    st.dataframe(mix, width="stretch", hide_index=True)
+load_policy_detail = st.toggle("Load Tier B / Tier C / Legacy blocker detail", value=False)
+if load_policy_detail:
+    selector = st.selectbox("Policy", ["Tier B", "Tier C", "Legacy Strict"])
+    raw = load_raw_signals()
+    sessions = sorted({x for x in (raw_session(r) for r in raw) if x})
+    recent = set(sessions[-20:])
+    counts: Counter[str] = Counter()
+    for signal in raw:
+        if raw_session(signal) not in recent:
+            continue
+        for gate in technical_gate_rows(signal, selector):
+            counts[gate] += 1
+    if counts:
+        detail = pd.DataFrame([{"Blocker": gate_label(code), "Count": count, "Technical Code": code} for code, count in counts.most_common(20)])
+        st.dataframe(detail, width="stretch", hide_index=True)
+    else:
+        st.info("No blockers recorded for this policy in the last 20 sessions.")
 
-st.caption("Question answered by this page: Why is the Laboratory doing this?")
+st.subheader("Risk & Concentration")
+if tickers:
+    symbols = [str(x.get("symbol") or "") for x in tickers if x.get("symbol")]
+    overlap = Counter(symbols)
+    multi = [f"{symbol} ×{count}" for symbol, count in overlap.items() if count > 1]
+    long_count = sum(1 for x in tickers if str(x.get("side") or "LONG").upper() == "LONG")
+    net_long = 100.0 * long_count / len(tickers) if tickers else None
+    rc = st.columns(4)
+    rc[0].metric("Net Long", f"{net_long:.0f}%" if net_long is not None else "N/D")
+    rc[1].metric("Open Risk", f"{n(control.get('open_risk_r')):.2f}R" if n(control.get("open_risk_r")) is not None else "N/D")
+    rc[2].metric("Locked Profit", f"{n(control.get('locked_profit_r')):+.2f}R" if n(control.get("locked_profit_r")) is not None else "N/D")
+    rc[3].metric("Ticker Overlap", ", ".join(multi) if multi else "None")
+    st.caption("Sector and correlation-cluster concentration require the 2.2 enrichment/snapshot fields; until verified they remain N/D rather than being estimated in the UI.")
+else:
+    st.info("No open exposure to evaluate.")
+
+show_previous = st.toggle("Show Today vs Previous Run", value=False)
+if show_previous:
+    raw = load_raw_signals()
+    sessions = sorted({x for x in (raw_session(r) for r in raw) if x})
+    if len(sessions) >= 2:
+        current_session, previous_session = sessions[-1], sessions[-2]
+        current_rows = [r for r in raw if raw_session(r) == current_session]
+        previous_rows = [r for r in raw if raw_session(r) == previous_session]
+        current_tiers, previous_tiers = Counter(raw_tier(r) for r in current_rows), Counter(raw_tier(r) for r in previous_rows)
+        compare = pd.DataFrame([
+            {"Metric": "Signals", "Current": len(current_rows), "Previous": len(previous_rows), "Delta": len(current_rows)-len(previous_rows)},
+            {"Metric": "Tier A", "Current": current_tiers.get("A",0), "Previous": previous_tiers.get("A",0), "Delta": current_tiers.get("A",0)-previous_tiers.get("A",0)},
+            {"Metric": "Tier B", "Current": current_tiers.get("B",0), "Previous": previous_tiers.get("B",0), "Delta": current_tiers.get("B",0)-previous_tiers.get("B",0)},
+            {"Metric": "Tier C", "Current": current_tiers.get("C",0), "Previous": previous_tiers.get("C",0), "Delta": current_tiers.get("C",0)-previous_tiers.get("C",0)},
+        ])
+        st.dataframe(compare, width="stretch", hide_index=True)
+    else:
+        st.info("A previous session is not available yet.")
+
+st.caption("Question answered by this page: Is the Laboratory healthy, where is signal flow blocked, and what needs attention now?")
 st.caption(f"Updated: {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S %Z')}")
