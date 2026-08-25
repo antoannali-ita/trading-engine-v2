@@ -21,6 +21,7 @@ from common_utility.production_portfolio_metrics import (
     usd_to_eur,
     weight_pct,
 )
+from common_utility.tradingview_links import tradingview_url
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config" / "production_portfolio.json"
@@ -187,6 +188,7 @@ for r in equities:
 
     rows.append({
         "Ticker": ticker,
+        "TradingView": tradingview_url(ticker, r.get("market")),
         "Company": r.get("name", ""),
         "Market": r.get("market", ""),
         "Quote": quote_currency,
@@ -259,7 +261,14 @@ if not df.empty:
     st.subheader("Open Positions")
     show = df.copy()
     show["Qty"] = pd.to_numeric(show["Qty"], errors="coerce").astype("Int64")
-    st.dataframe(_production_style(show), width="stretch", hide_index=True)
+    st.dataframe(
+        _production_style(show),
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "TradingView": st.column_config.LinkColumn("TradingView", display_text="TV ↗"),
+        },
+    )
 
     st.subheader("Position Concentration")
     concentration = df[["Ticker", "Value $", "Value €", "Weight %"]].copy().sort_values("Weight %", ascending=False)
@@ -298,6 +307,8 @@ with st.sidebar:
             "Questa pagina mostra **capitale reale** e resta separata da Laboratory e paper trading. "
             "`LIVE EUR→USD` indica un titolo quotato in euro convertito in USD con EUR/USD corrente."
         )
+    with st.expander("TradingView", expanded=False):
+        st.markdown("La colonna **TradingView** apre direttamente il grafico del titolo. Il mapping exchange è esplicito per evitare ticker ambigui tra Yahoo e TradingView.")
     with st.expander("Target tracking", expanded=False):
         st.markdown("`Distance to Target %` e `Target Gap $` misurano la distanza dal target configurato. `TARGET HIT` indica target raggiunto o superato.")
     with st.expander("FX & concentration", expanded=False):
