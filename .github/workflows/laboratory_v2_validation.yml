@@ -6,7 +6,8 @@ on:
     branches: [main]
     paths:
       - 'pages/**'
-      - 'dashboard/pages/**'
+      - 'dashboard/**'
+      - 'supabase/migrations/**'
       - 'docs/LABORATORY_V2_GUIDELINES.md'
       - '.github/workflows/laboratory_v2_validation.yml'
       - '.github/workflows/lab_paper_scheduler.yml'
@@ -32,13 +33,10 @@ jobs:
       - name: Install Laboratory dependencies
         working-directory: laboratory
         run: pip install -r requirements.txt
-      - name: Compile Laboratory V2 modules
+      - name: Compile Laboratory 2.2 modules
         working-directory: laboratory
         run: |
-          python -m py_compile src/lab/paper_policy.py
-          python -m py_compile jobs/run_paper_signals.py
-          python -m py_compile jobs/enrich_lab_metadata.py
-          python -m py_compile jobs/run_signal_outcomes.py
+          python -m compileall -q src jobs tests
       - name: Run Laboratory unit tests
         working-directory: laboratory
         env:
@@ -57,9 +55,16 @@ jobs:
           python-version: '3.11'
       - name: Compile Laboratory dashboard pages
         run: |
+          python -m py_compile dashboard/data_access.py
+          python -m py_compile pages/2_Laboratory_Overview.py
           python -m py_compile pages/2_Laboratory_Control.py
+          python -m py_compile pages/2_Strategy_Lab.py
+          python -m py_compile pages/2_Strategie_Parametri.py
           python -m py_compile pages/3_Paper_Portfolio.py
           python -m py_compile pages/4_Research_Evolution.py
+          python -m py_compile dashboard/pages/2_Laboratory_Overview.py
           python -m py_compile dashboard/pages/2_Laboratory_Control.py
+          python -m py_compile dashboard/pages/2_Strategy_Lab.py
+          python -m py_compile dashboard/pages/2_Strategy_Parameters.py
           python -m py_compile dashboard/pages/3_Paper_Portfolio.py
           python -m py_compile dashboard/pages/4_Research_Evolution.py
