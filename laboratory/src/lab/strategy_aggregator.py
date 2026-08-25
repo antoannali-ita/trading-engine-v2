@@ -13,11 +13,13 @@ from lab.risk_metrics import (
     open_risk_and_locked_profit_r,
     price_r,
     profit_factor,
+    realized_r_from_fills,
 )
 from lab.stress_policy import evaluate_live_stress
 from lab.verdict_engine import evaluate_verdict
 
 ACTIVE_STATUSES = {"OPEN", "TP1_HIT"}
+EXIT_FILL_TYPES = {"TP1", "TP2", "STOP", "MANUAL_EXIT"}
 
 
 def _dict(value: Any) -> dict[str, Any]:
@@ -64,7 +66,7 @@ def _atr(row: dict[str, Any]) -> float | None:
     return _float(row.get("atr14_at_entry")) or _float(details.get("atr14"))
 
 
-def position_r_metrics(row: dict[str, Any]) -> dict[str, float | bool | None]:
+def position_r_metrics(row: dict[str, Any], fills: Iterable[dict[str, Any]] = ()) -> dict[str, float | bool | None]:
     fill = _fill(row)
     stop_initial = _float(row.get("stop_initial"))
     if fill is None or stop_initial is None:
@@ -89,11 +91,24 @@ def position_r_metrics(row: dict[str, Any]) -> dict[str, float | bool | None]:
         result["locked_profit_r"] = locked_r
     elif status == "CLOSED":
         stored = _float(row.get("realized_r"))
+        exit_fills = [
+            f for f in fills
+            if str(f.get("fill_type") or "").upper() in EXIT_FILL_TYPES and int(f.get("qty") or 0) > 0
+        ]
+        weighted = None
+        if exit_fills:
+            weighted = realized_r_from_fills(
+                basis=basis,
+                initial_qty=int(row.get("qty") or 0),
+                exit_fills=exit_fills,
+                entry_cost=_float(row.get("commission_entry")) or 0.0,
+            )
         exit_price = _float(row.get("exit_price")) or _float(row.get("last_price"))
-        result["realized_r"] = stored if stored is not None else (
+        fallback = (
             price_r(side=basis.side, fill_price=basis.fill_price, price=exit_price, risk_denominator=basis.normalized_initial_risk)
             if exit_price is not None else None
         )
+        result["realized_r"] = stored if stored is not None else (weighted if weighted is not None else fallback)
     return result
 
 
@@ -123,10 +138,19 @@ def aggregate_strategy(
     signals: Iterable[dict[str, Any]],
     positions: Iterable[dict[str, Any]],
     outcomes: Iterable[dict[str, Any]],
+    fills: Iterable[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     sigs = [x for x in signals if str(x.get("strategy") or "") == strategy and strategy_version(x) == strategy_version_value]
     pos = [x for x in positions if str(x.get("strategy") or "") == strategy and strategy_version(x) == strategy_version_value]
     outs = [x for x in outcomes if str(x.get("strategy") or "") == strategy]
+    fill_rows = list(fills)
+    fills_by_position: dict[int, list[dict[str, Any]]] = {}
+    for f in fill_rows:
+        try:
+            pid = int(f.get("position_id"))
+        except Exception:
+            continue
+        fills_by_position.setdefault(pid, []).append(f)
 
     closed_rows = [p for p in pos if str(p.get("status") or "").upper() == "CLOSED"]
     open_rows = [p for p in pos if str(p.get("status") or "").upper() in ACTIVE_STATUSES]
@@ -136,7 +160,11 @@ def aggregate_strategy(
     open_risk: list[float] = []
     locked: list[float] = []
     for p in pos:
-        metrics = position_r_metrics(p)
+        try:
+            pid = int(p.get("id"))
+        except Exception:
+            pid = -1
+        metrics = position_r_metrics(p, fills_by_position.get(pid, []))
         if metrics.get("realized_r") is not None:
             closed_r.append(float(metrics["realized_r"]))
         if metrics.get("mtm_r") is not None:
@@ -250,16 +278,18 @@ def aggregate_all_strategies(
     signals: Iterable[dict[str, Any]],
     positions: Iterable[dict[str, Any]],
     outcomes: Iterable[dict[str, Any]],
+    fills: Iterable[dict[str, Any]] = (),
 ) -> list[dict[str, Any]]:
     sigs = list(signals)
     pos = list(positions)
     outs = list(outcomes)
+    fill_rows = list(fills)
     keys: set[tuple[str, str]] = set()
     for row in sigs + pos:
         strategy = str(row.get("strategy") or "")
         if strategy:
             keys.add((strategy, strategy_version(row)))
     return [
-        aggregate_strategy(strategy=s, strategy_version_value=v, signals=sigs, positions=pos, outcomes=outs)
+        aggregate_strategy(strategy=s, strategy_version_value=v, signals=sigs, positions=pos, outcomes=outs, fills=fill_rows)
         for s, v in sorted(keys)
     ]
