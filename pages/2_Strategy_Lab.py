@@ -16,6 +16,19 @@ st.set_page_config(page_title="Strategy Lab", page_icon="🧪", layout="wide")
 
 VERDICT_ICON = {"WORKING": "🟢", "EARLY": "🟡", "WATCH": "🟠", "WEAK": "🔴", "DATA_ISSUE": "🔴"}
 
+# Active Laboratory registry. These strategies must remain visible even when a
+# deterministic generator (for example Fibonacci) has produced no persisted
+# signal in the available snapshot history. This avoids confusing "0 setups"
+# with "strategy disabled".
+ACTIVE_STRATEGY_REGISTRY = {
+    "trend_continuation": "v2.0",
+    "trend_fib_pullback_v1": "v1.0",
+    "cross_sectional_momentum": "v2.0",
+    "short_term_reversal_rsi45": "v2.0-r45",
+    "short_term_reversal_rsi35": "v2.0-r35",
+    "defensive_low_vol": "v2.0",
+}
+
 
 def j(v: Any) -> dict:
     if isinstance(v, dict):
@@ -36,15 +49,56 @@ def n(v: Any) -> float | None:
 
 def signed_style(frame: pd.DataFrame, columns: list[str]):
     styler = frame.style
+
     def color(v: Any) -> str:
         value = n(v)
         if value is None or value == 0:
             return ""
         return "color:#15803d;font-weight:700;" if value > 0 else "color:#dc2626;font-weight:700;"
+
     for col in columns:
         if col in frame.columns:
             styler = styler.map(color, subset=[col])
     return styler
+
+
+def with_registered_strategies(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add zero-evidence rows for active strategies absent from snapshots."""
+    out = [dict(row) for row in rows]
+    seen = {str(row.get("strategy") or "") for row in out}
+    for strategy, version in ACTIVE_STRATEGY_REGISTRY.items():
+        if strategy in seen:
+            continue
+        out.append({
+            "strategy": strategy,
+            "strategy_version": version,
+            "signals": 0,
+            "eligible": 0,
+            "paper_opened": 0,
+            "open": 0,
+            "closed": 0,
+            "wins": 0,
+            "losses": 0,
+            "win_rate": None,
+            "net_pf": None,
+            "expectancy_r": None,
+            "realized_r": 0.0,
+            "mtm_r": 0.0,
+            "avg_return_pct": None,
+            "max_drawdown_r": 0.0,
+            "open_risk_r": 0.0,
+            "locked_profit_r": 0.0,
+            "main_blocker": None,
+            "main_blocker_pct": None,
+            "blocker_sample": 0,
+            "maturity": "UNDERTESTED",
+            "verdict": "EARLY",
+            "verdict_reason_codes": ["NO_PERSISTED_EVIDENCE_YET"],
+            "stress_status": "PASS",
+            "stress_reason_codes": [],
+            "registration_only": True,
+        })
+    return sorted(out, key=lambda row: str(row.get("strategy") or ""))
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -81,15 +135,18 @@ with st.sidebar:
         st.markdown("Qui confrontiamo le strategie. Il centro non è il P&L in dollari ma **Expectancy R, Profit Factor, MTM R, Drawdown e maturità del campione**.")
     with st.expander("Verdict"):
         st.markdown("**EARLY** <30 closed. **WORKING** richiede campione sufficiente, PF ≥1.20, Expectancy R positiva, rendimento medio positivo e Live Stress PASS. **WATCH/WEAK/DATA ISSUE** seguono la policy versionata del backend.")
+    with st.expander("Strategie senza segnali"):
+        st.markdown("Una strategia **attiva** resta nello scoreboard anche con 0 segnali. In quel caso appare UNDERTESTED / EARLY: significa che il motore non ha ancora persistito evidenza sufficiente, non che la strategia sia disattivata.")
     with st.expander("Perché R"):
         st.markdown("R normalizza ogni trade per il rischio iniziale. Una strategia non sembra migliore solo perché usa una size maggiore.")
     with st.expander("Drill-down"):
         st.markdown("Seleziona una strategia e poi una vista. I dati pesanti vengono letti solo per la vista scelta, invece di caricare tutto a ogni render.")
 
 summaries, tickers, aggregation_run = load_summary()
-if not summaries:
-    st.warning("Strategy snapshots are not available yet. Apply the Laboratory 2.2 schema and complete the snapshot pipeline before using Strategy Lab verdicts.")
-    st.stop()
+summaries = with_registered_strategies(summaries)
+
+if not aggregation_run:
+    st.warning("No completed Laboratory 2.2 snapshot is available yet. Registered active strategies are shown, but evidence metrics remain N/D until the snapshot pipeline completes.")
 
 active_by_strategy: dict[str, list[str]] = {}
 for row in tickers:
@@ -143,6 +200,8 @@ if view == "Overview" and summary:
     cols[5].metric("MTM R", f"{n(summary.get('mtm_r')):+.2f}R" if n(summary.get("mtm_r")) is not None else "N/D")
     cols[6].metric("Open Risk", f"{n(summary.get('open_risk_r')):.2f}R" if n(summary.get("open_risk_r")) is not None else "N/D")
     cols[7].metric("Max DD", f"{n(summary.get('max_drawdown_r')):+.2f}R" if n(summary.get("max_drawdown_r")) is not None else "N/D")
+    if summary.get("registration_only"):
+        st.info("Active strategy registered in the Laboratory, but no persisted snapshot evidence exists yet. Zero signals is not the same as disabled.")
     reasons = summary.get("verdict_reason_codes") or []
     stress = summary.get("stress_reason_codes") or []
     if reasons:
