@@ -79,6 +79,31 @@ def market_prices(tickers: tuple[str, ...]) -> dict[str, tuple[float, str]]:
     return out
 
 
+def _stored_company_name(row: dict[str, Any]) -> str | None:
+    candidates = [row, j(row.get("details"))]
+    keys = ("company_name", "company", "name", "shortName", "longName", "short_name", "long_name")
+    for source in candidates:
+        for key in keys:
+            value = source.get(key) if isinstance(source, dict) else None
+            if value and str(value).strip():
+                return str(value).strip()
+    return None
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def yahoo_company_names(tickers: tuple[str, ...]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for ticker in tickers:
+        try:
+            info = yf.Ticker(ticker).get_info() or {}
+            name = info.get("shortName") or info.get("longName")
+            if name:
+                out[ticker] = str(name)
+        except Exception:
+            pass
+    return out
+
+
 def effective_price(row: dict[str, Any], live: dict[str, tuple[float, str]]) -> tuple[float | None, str]:
     status = str(row.get("status") or "").upper()
     if status == "CLOSED":
@@ -169,6 +194,15 @@ closed_pos = [p for p in positions if str(p.get("status") or "").upper() == "CLO
 open_symbols = tuple(sorted({str(p.get("symbol") or "").upper() for p in open_pos if p.get("symbol")}))
 live = market_prices(open_symbols)
 
+stored_names = {
+    str(p.get("symbol") or "").upper(): _stored_company_name(p)
+    for p in open_pos
+    if p.get("symbol") and _stored_company_name(p)
+}
+missing_name_symbols = tuple(t for t in open_symbols if t not in stored_names)
+yahoo_names = yahoo_company_names(missing_name_symbols)
+company_names = {**yahoo_names, **stored_names}
+
 rows: list[dict[str, Any]] = []
 capital_deployed = 0.0
 open_risk_total = 0.0
@@ -195,6 +229,7 @@ for p in open_pos:
         open_net_total += net
     rows.append({
         "Ticker": ticker,
+        "Company": company_names.get(ticker, "N/D"),
         "Strategy": p.get("strategy"),
         "Tier": tier_of(p),
         "Current $": current,
@@ -242,10 +277,10 @@ open_df = pd.DataFrame(rows)
 if open_df.empty:
     st.info("No open paper positions.")
 else:
-    shown = open_df[["Ticker", "Strategy", "Tier", "Current $", "Net P&L $", "Net %", "Risk to Stop %", "Open Risk $", "Status"]]
+    shown = open_df[["Ticker", "Company", "Strategy", "Tier", "Current $", "Net P&L $", "Net %", "Risk to Stop %", "Open Risk $", "Status"]]
     st.dataframe(fmt(shown), width="stretch", hide_index=True)
     with st.expander("Cost Audit · Entry vs Estimated Exit Costs"):
-        audit = open_df[["Ticker", "Source", "Price P&L $", "Entry Cost $", "Est. Exit Cost $", "Net P&L $"]]
+        audit = open_df[["Ticker", "Company", "Source", "Price P&L $", "Entry Cost $", "Est. Exit Cost $", "Net P&L $"]]
         st.dataframe(fmt(audit), width="stretch", hide_index=True)
         st.caption("Open Net P&L uses only entry costs already incurred. Estimated exit costs are shown separately and are not used for the open status badge.")
 
