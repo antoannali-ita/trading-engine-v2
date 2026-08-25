@@ -10,7 +10,7 @@
     {"market":"NASDAQ","ticker":"PYPL","name":"PAYPAL HOLDINGS","quantity":50,"avg_price_usd":62.16,"target_usd":85.00,"snapshot_price_usd":61.78},
     {"market":"NYSE","ticker":"CF","name":"CF INDUSTRIES HL","quantity":21,"avg_price_usd":114.23,"target_usd":130.00,"snapshot_price_usd":128.70},
     {"market":"NASDAQ","ticker":"CSCO","name":"CISCO","quantity":44,"avg_price_usd":109.54,"target_usd":124.50,"snapshot_price_usd":110.74},
-    {"market":"BIT","ticker":"BPE.MI","name":"BPER BANCA","quantity":140,"avg_price_usd":16.51,"target_usd":17.62,"snapshot_price_usd":16.68,"quote_currency":"EUR","snapshot_price_native":14.25},
+    {"market":"BIT","ticker":"BPE.MI","name":"BPER BANCA","quantity":140,"avg_price_usd":16.51,"target_usd":17.62,"snapshot_price_usd":16.63,"quote_currency":"EUR","snapshot_price_native":14.25},
     {"market":"BIT","ticker":"LTMC.MI","name":"LOTTOMATICA","quantity":59,"avg_price_usd":29.29,"target_usd":32.77,"snapshot_price_usd":29.29,"quote_currency":"EUR","snapshot_price_native":25.10}
   ],
   "fx_positions": [
