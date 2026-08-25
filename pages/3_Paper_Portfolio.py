@@ -8,20 +8,20 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
+from common_utility.lab_cost_model import (
+    CURRENT_COMMISSION_PER_SIDE,
+    DISCOUNT_COMMISSION_PER_SIDE,
+    SLIPPAGE_BPS,
+    closed_net_pnl,
+    projected_round_trip_pnl,
+)
+
 try:
     from dashboard import data_access
 except ModuleNotFoundError:
     import dashboard.data_access as data_access
 
 st.set_page_config(page_title="Paper Portfolio", page_icon="📒", layout="wide")
-
-CURRENT_COMMISSION = 12.0
-DISCOUNT_COMMISSION = 9.90
-SLIPPAGE_BPS = 5.0
-
-
-def require_access() -> None:
-    return
 
 
 def j(value: Any) -> dict:
@@ -45,17 +45,11 @@ def live_prices(tickers: tuple[str, ...]) -> dict[str, float]:
     if not tickers:
         return {}
     try:
-        data = yf.download(
-            list(tickers), period="1d", interval="1m", auto_adjust=False,
-            progress=False, group_by="ticker", threads=True,
-        )
+        data = yf.download(list(tickers), period="1d", interval="1m", auto_adjust=False, progress=False, group_by="ticker", threads=True)
         out: dict[str, float] = {}
         for ticker in tickers:
             try:
-                if len(tickers) == 1:
-                    series = data["Close"].dropna()
-                else:
-                    series = data[(ticker, "Close")].dropna()
+                series = data["Close"].dropna() if len(tickers) == 1 else data[(ticker, "Close")].dropna()
                 if not series.empty:
                     out[ticker] = float(series.iloc[-1])
             except Exception:
@@ -65,16 +59,6 @@ def live_prices(tickers: tuple[str, ...]) -> dict[str, float]:
         return {}
 
 
-def net_pnl(entry, exit_price, qty, commission):
-    entry, exit_price, qty = n(entry), n(exit_price), n(qty)
-    if not entry or exit_price is None or not qty:
-        return None
-    slip = SLIPPAGE_BPS / 10000.0
-    entry_exec = entry * (1 + slip)
-    exit_exec = exit_price * (1 - slip)
-    return (exit_exec - entry_exec) * qty - 2 * commission
-
-
 def gross_rr(entry, stop, tp2):
     entry, stop, tp2 = n(entry), n(stop), n(tp2)
     if entry is None or stop is None or tp2 is None or entry <= stop:
@@ -82,18 +66,13 @@ def gross_rr(entry, stop, tp2):
     return (tp2 - entry) / (entry - stop)
 
 
-def fmt_table(frame: pd.DataFrame) -> pd.io.formats.style.Styler:
-    money_cols = {"entry","ideal_entry","last_exit","notional","stop","tp1","tp2","pnl_net_12_now","pnl_net_9_90_now"}
-    pct_cols = {"return_pct_db","move_pct_live"}
-    ratio_cols = {"gross_rr_tp2","net_rr_12","net_rr_9_90"}
+def fmt_table(frame: pd.DataFrame):
     fmt: dict[str, str] = {}
     for col in frame.columns:
-        if col in money_cols:
+        if col in {"Entry", "Ideal Entry", "Current / Exit", "Notional", "Stop", "TP1", "TP2", "Projected Net P&L 12", "Projected Net P&L 9.90"}:
             fmt[col] = "{:.2f}"
-        elif col in pct_cols:
+        elif "%" in col:
             fmt[col] = "{:.2f}%"
-        elif col in ratio_cols:
-            fmt[col] = "{:.2f}"
         elif pd.api.types.is_float_dtype(frame[col]):
             fmt[col] = "{:.2f}"
     return frame.style.format(fmt, na_rep="-")
@@ -104,116 +83,102 @@ def load_positions():
     return data_access.lab_paper_positions(10000)
 
 
-require_access()
 st.title("📒 Paper Portfolio")
-st.caption("Posizioni virtuali del Laboratory. Non sono ordini reali e non modificano Production.")
+st.caption("Detailed paper-trade ledger. PAPER only; this page does not modify Production or send broker orders.")
 
 with st.sidebar:
-    st.markdown("### Guida della pagina")
-    st.markdown("""
-**Domanda:** cosa stiamo realmente sperimentando e come sta andando?
-
-- **A:** quasi-production, ma sempre paper.
-- **B:** esperimento con regole più permissive.
-- **C:** 🔬 **RESEARCH ONLY · NON OPERATIVO**.
-
-Per le posizioni aperte il **prezzo corrente viene letto dal mercato** con cache di circa 60 secondi. Se il feed non risponde, compare `DB FALLBACK`.
-
-I costi mostrano due scenari Fineco:
-- storico/conservativo: **$12 per eseguito**;
-- scenario scontato: **$9,90 per eseguito**.
-""")
+    st.markdown("### Page Guide")
+    st.markdown(
+        f"**Current modeled cost:** ${CURRENT_COMMISSION_PER_SIDE:.2f} per executed side.\n\n"
+        f"**Future discount scenario:** ${DISCOUNT_COMMISSION_PER_SIDE:.2f} per side.\n\n"
+        f"**Research slippage:** {SLIPPAGE_BPS:.0f} bps.\n\n"
+        "Projected P&L assumes a hypothetical exit now and therefore includes both sides. The Live Overview uses only entry costs for open-trade status."
+    )
 
 try:
     positions = load_positions()
 except Exception as exc:
-    st.error(f"Impossibile leggere Supabase: {type(exc).__name__}: {exc}")
+    st.error(f"Unable to read paper portfolio: {type(exc).__name__}: {exc}")
     st.stop()
 
 if not positions:
-    st.info("Nessuna paper position disponibile.")
+    st.info("No paper positions available.")
     st.stop()
 
-open_symbols = tuple(sorted({
-    str(p.get("symbol") or "").upper()
-    for p in positions
-    if str(p.get("status") or "").upper() in {"OPEN", "TP1_HIT"} and p.get("symbol")
-}))
+open_symbols = tuple(sorted({str(p.get("symbol") or "").upper() for p in positions if str(p.get("status") or "").upper() in {"OPEN", "TP1_HIT"} and p.get("symbol")}))
 market_prices = live_prices(open_symbols)
 
 rows = []
 for p in positions:
     d = j(p.get("details"))
     cost = j(d.get("cost_model"))
-    tier = d.get("paper_tier") or "N/D"
     status = str(p.get("status") or "N/D").upper()
     ticker = str(p.get("symbol") or "").upper()
     entry = n(p.get("entry_price"))
-
+    qty = n(p.get("qty"))
     if status in {"OPEN", "TP1_HIT"}:
-        live = market_prices.get(ticker)
-        last = live if live is not None else (n(p.get("last_price")) or entry)
-        source = "LIVE 1M" if live is not None else "DB FALLBACK"
+        current = market_prices.get(ticker)
+        last = current if current is not None else (n(p.get("last_price")) or entry)
+        source = "LIVE 1M" if current is not None else "DB FALLBACK"
     else:
         last = n(p.get("exit_price")) or n(p.get("last_price")) or entry
         source = "CLOSED"
-
-    current_pnl = net_pnl(entry, last, p.get("qty"), CURRENT_COMMISSION)
-    discount_pnl = net_pnl(entry, last, p.get("qty"), DISCOUNT_COMMISSION)
-    capital = n(p.get("capital")) or ((entry or 0) * (n(p.get("qty")) or 0))
-    safety = d.get("safety_label") or ("RESEARCH_ONLY_NON_OPERATIONAL" if tier == "C" else "PAPER")
+    capital = n(p.get("capital")) or ((entry or 0) * (qty or 0))
     move_pct = ((last / entry) - 1) * 100 if last is not None and entry else None
-
+    if status == "CLOSED":
+        pnl12 = closed_net_pnl(entry, last, qty, CURRENT_COMMISSION_PER_SIDE, SLIPPAGE_BPS)
+        pnl990 = closed_net_pnl(entry, last, qty, DISCOUNT_COMMISSION_PER_SIDE, SLIPPAGE_BPS)
+    else:
+        pnl12 = projected_round_trip_pnl(entry, last, qty, CURRENT_COMMISSION_PER_SIDE, SLIPPAGE_BPS)
+        pnl990 = projected_round_trip_pnl(entry, last, qty, DISCOUNT_COMMISSION_PER_SIDE, SLIPPAGE_BPS)
     rows.append({
-        "apertura": p.get("opened_at") or p.get("created_at"),
-        "ticker": ticker,
-        "strategy": p.get("strategy"),
-        "tier": tier,
-        "safety": safety,
-        "risk_key": d.get("risk_key") or f"EQUITY:{ticker}",
-        "experiment_key": d.get("experiment_key"),
-        "stato": status,
-        "entry": entry,
-        "ideal_entry": n(d.get("ideal_entry")),
-        "last_exit": last,
-        "price_source": source,
-        "move_pct_live": move_pct,
-        "qty": p.get("qty"),
-        "notional": capital,
-        "stop": n(p.get("stop_current")) or n(p.get("stop_initial")),
-        "tp1": n(p.get("tp1")),
-        "tp2": n(p.get("tp2")),
-        "gross_rr_tp2": n(cost.get("gross_rr")) or gross_rr(entry, p.get("stop_initial"), p.get("tp2")),
-        "net_rr_12": n(cost.get("net_rr_fineco_current_12")),
-        "net_rr_9_90": n(cost.get("net_rr_fineco_discount_9_90")),
-        "pnl_net_12_now": current_pnl,
-        "pnl_net_9_90_now": discount_pnl,
-        "return_pct_db": n(p.get("return_pct")),
-        "exit_reason": p.get("exit_reason"),
+        "Opened": p.get("opened_at") or p.get("created_at"),
+        "Ticker": ticker,
+        "Strategy": p.get("strategy"),
+        "Tier": d.get("paper_tier") or "N/D",
+        "Status": status,
+        "Entry": entry,
+        "Ideal Entry": n(d.get("ideal_entry")),
+        "Current / Exit": last,
+        "Price Source": source,
+        "Move %": move_pct,
+        "Qty": qty,
+        "Notional": capital,
+        "Stop": n(p.get("stop_current")) or n(p.get("stop_initial")),
+        "TP1": n(p.get("tp1")),
+        "TP2": n(p.get("tp2")),
+        "Gross R/R TP2": n(cost.get("gross_rr")) or gross_rr(entry, p.get("stop_initial"), p.get("tp2")),
+        "Projected Net P&L 12": pnl12,
+        "Projected Net P&L 9.90": pnl990,
+        "Exit Reason": p.get("exit_reason"),
     })
 
 df = pd.DataFrame(rows)
-open_mask = df["stato"].astype(str).str.upper().isin(["OPEN", "TP1_HIT"])
-closed_mask = df["stato"].astype(str).str.upper().eq("CLOSED")
+open_mask = df["Status"].isin(["OPEN", "TP1_HIT"])
+closed_mask = df["Status"].eq("CLOSED")
 
 m = st.columns(5)
-m[0].metric("Posizioni totali", len(df))
-m[1].metric("Aperte", int(open_mask.sum()))
-m[2].metric("Chiuse", int(closed_mask.sum()))
-m[3].metric("Tier C 🔬", int((df["tier"] == "C").sum()))
-m[4].metric("Strategie", df["strategy"].nunique())
+m[0].metric("Total Positions", len(df))
+m[1].metric("Open", int(open_mask.sum()))
+m[2].metric("Closed", int(closed_mask.sum()))
+m[3].metric("Tier C", int((df["Tier"] == "C").sum()))
+m[4].metric("Strategies", df["Strategy"].nunique())
 
-if (df["tier"] == "C").any():
-    st.warning("🔬 Le righe Tier C sono esperimenti controfattuali RESEARCH ONLY. Non vanno interpretate come BUY o indicazioni operative.")
-
-status_filter = st.multiselect("Stato", sorted(df["stato"].dropna().astype(str).unique()), default=sorted(df["stato"].dropna().astype(str).unique()))
-tier_filter = st.multiselect("Tier", sorted(df["tier"].dropna().astype(str).unique()), default=sorted(df["tier"].dropna().astype(str).unique()))
-shown = df[df["stato"].astype(str).isin(status_filter) & df["tier"].astype(str).isin(tier_filter)]
+status_filter = st.multiselect("Status", sorted(df["Status"].dropna().astype(str).unique()), default=sorted(df["Status"].dropna().astype(str).unique()))
+tier_filter = st.multiselect("Tier", sorted(df["Tier"].dropna().astype(str).unique()), default=sorted(df["Tier"].dropna().astype(str).unique()))
+shown = df[df["Status"].astype(str).isin(status_filter) & df["Tier"].astype(str).isin(tier_filter)]
 st.dataframe(fmt_table(shown), width="stretch", hide_index=True)
 
-st.subheader("Concentrazione virtuale per RiskKey")
-risk = df.groupby("risk_key", as_index=False).agg(posizioni=("ticker", "count"), notional=("notional", "sum"))
-st.dataframe(fmt_table(risk.sort_values("notional", ascending=False)), width="stretch", hide_index=True)
-st.caption("Questa concentrazione è informativa. Il Portfolio Risk Engine futuro userà RiskKey per aggregare strategie diverse sullo stesso sottostante.")
+st.subheader("Virtual Concentration by Risk Key")
+risk_rows = []
+for p in positions:
+    d = j(p.get("details"))
+    ticker = str(p.get("symbol") or "").upper()
+    entry = n(p.get("entry_price")) or 0.0
+    qty = n(p.get("qty")) or 0.0
+    risk_rows.append({"Risk Key": d.get("risk_key") or f"EQUITY:{ticker}", "Notional": n(p.get("capital")) or entry * qty})
+risk = pd.DataFrame(risk_rows).groupby("Risk Key", as_index=False).agg(Positions=("Risk Key", "count"), Notional=("Notional", "sum"))
+st.dataframe(fmt_table(risk.sort_values("Notional", ascending=False)), width="stretch", hide_index=True)
 
-st.caption(f"Aggiornato: {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S %Z')}")
+st.caption("Question answered by this page: What paper trades are actually open or closed?")
+st.caption(f"Updated: {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S %Z')}")
