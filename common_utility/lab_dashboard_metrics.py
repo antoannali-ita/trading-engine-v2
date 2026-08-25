@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-COMMISSION_USD = 9.90
-SLIPPAGE_BPS = 5.0
+from common_utility.lab_cost_model import CURRENT_COMMISSION_PER_SIDE, SLIPPAGE_BPS
+
+COMMISSION_USD = CURRENT_COMMISSION_PER_SIDE
 
 
 def as_float(value: Any) -> float | None:
@@ -38,16 +39,9 @@ def date_label(value: Any) -> str:
 
 
 def trading_days_elapsed(opened_at: Any, ended_at: Any, market_sessions: Iterable[str]) -> int | None:
-    """Count completed market sessions after the opening date up to the end date.
-
-    Opening session is day 0. Example: Friday open -> Monday end = 1, assuming
-    both dates are actual sessions. The caller supplies authoritative market dates.
-    """
     opened = _iso_date(opened_at)
     ended = _iso_date(ended_at)
-    if not opened or not ended:
-        return None
-    if ended < opened:
+    if not opened or not ended or ended < opened:
         return None
     sessions = {str(day)[:10] for day in market_sessions if day}
     if not sessions:
@@ -123,14 +117,7 @@ def age_days(opened_at: Any, now: datetime | None = None) -> float | None:
         return None
 
 
-def open_trade_state(
-    entry: Any,
-    current: Any,
-    qty: Any,
-    opened_at: Any = None,
-    early_days: float = 2.0,
-    trading_days_open: int | None = None,
-) -> str:
+def open_trade_state(entry: Any, current: Any, qty: Any, opened_at: Any = None, early_days: float = 2.0, trading_days_open: int | None = None) -> str:
     move = gross_price_return_pct(entry, current)
     band = cost_band_pct(entry, current, qty)
     calendar_age = age_days(opened_at)
