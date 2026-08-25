@@ -18,6 +18,7 @@ from common_utility.lab_cost_model import (
     open_net_pnl,
     open_price_pnl,
 )
+from common_utility.tradingview_links import tradingview_url
 
 try:
     from dashboard import data_access
@@ -250,6 +251,8 @@ with st.sidebar:
         st.markdown("Questa pagina funziona come una vista portafoglio semplificata: per ogni posizione vedi **prezzo di ingresso, data/ora di ingresso, giorni di borsa trascorsi, prezzo attuale, valore di mercato, minimo/massimo del giorno, stop e target**, oltre al P&L.")
     with st.expander("Come leggere la tabella principale"):
         st.markdown("**Entry Time** = data e ora italiana in cui è stata aperta la paper position.  \n**Trading Days** = numero di sedute USA trascorse dall'ingresso, usando SPY come calendario di mercato.  \n**Qty** = numero intero di azioni.  \n**Entry $** = prezzo di ingresso paper.  \n**Current $** = ultimo prezzo disponibile.  \n**Min / Max** = minimo e massimo della seduta disponibili da Yahoo.  \n**Market Value $** = Current × Qty.  \n**SL / TP1 / TP2** = livelli di protezione e obiettivi correnti.")
+    with st.expander("TradingView"):
+        st.markdown("**TV ↗** apre direttamente il grafico TradingView del ticker. È un collegamento visuale e non modifica prezzi, segnali o metriche Laboratory.")
     with st.expander("Come leggere utile/perdita e rischio"):
         st.markdown("**Verde** = valore positivo. **Rosso** = valore negativo.  \n**Open Net P&L** sottrae solo i costi già sostenuti all'ingresso.  \n**Risk to Stop %** indica quanto dista il prezzo dallo stop.  \n**Open Risk $** è la perdita teorica dal prezzo attuale allo stop memorizzato.")
     with st.expander("Costi e prezzi"):
@@ -325,6 +328,7 @@ for p in open_pos:
         open_net_total += net
     rows.append({
         "Ticker": ticker,
+        "TradingView": tradingview_url(ticker, p.get("market")),
         "Company": company_names.get(ticker, "N/D"),
         "Strategy": p.get("strategy"),
         "Tier": tier_of(p),
@@ -383,12 +387,19 @@ if open_df.empty:
     st.info("No open paper positions.")
 else:
     shown = open_df[[
-        "Ticker", "Company", "Strategy", "Tier", "Entry Time", "Trading Days", "Qty",
+        "Ticker", "TradingView", "Company", "Strategy", "Tier", "Entry Time", "Trading Days", "Qty",
         "Entry $", "Current $", "Min $", "Max $",
         "Market Value $", "Net P&L $", "Net %",
         "SL $", "TP1 $", "TP2 $", "Risk to Stop %",
     ]]
-    st.dataframe(fmt(shown), width="stretch", hide_index=True)
+    st.dataframe(
+        fmt(shown),
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "TradingView": st.column_config.LinkColumn("TradingView", display_text="TV ↗"),
+        },
+    )
     st.caption("Trading Days counts verified SPY market sessions from the entry date. Fineco-style summary without Bid/Ask/Volume. Min/Max use the available Yahoo session snapshot; '-' means the daily range could not be verified from the current feed.")
     with st.expander("Risk & Cost Audit"):
         audit_cols = [
