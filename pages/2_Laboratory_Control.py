@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import pandas as pd
@@ -11,11 +11,13 @@ import yfinance as yf
 
 from common_utility.lab_dashboard_metrics import (
     closed_net_pnl,
+    date_label,
     estimated_round_trip_cost,
     gross_price_pnl,
     gross_price_return_pct,
     open_net_pnl,
     open_trade_state,
+    trading_days_elapsed,
 )
 
 try:
@@ -51,6 +53,20 @@ def n(value: Any) -> float | None:
 def session_of(row: dict[str, Any]) -> str | None:
     value = row.get("signal_date") or row.get("source_signal_date") or row.get("created_at") or row.get("opened_at")
     return str(value)[:10] if value else None
+
+
+def opened_at_of(row: dict[str, Any]) -> Any:
+    return row.get("opened_at") or row.get("created_at")
+
+
+def closed_at_of(row: dict[str, Any]) -> Any:
+    details = j(row.get("details"))
+    return (
+        row.get("closed_at")
+        or row.get("exit_at")
+        or details.get("closed_at")
+        or details.get("exit_at")
+    )
 
 
 def tier_of(row: dict[str, Any]) -> str | None:
@@ -108,6 +124,25 @@ def market_prices(tickers: tuple[str, ...]) -> dict[str, tuple[float, str]]:
         except Exception:
             pass
     return out
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def market_session_dates(start_date: str, end_date_exclusive: str) -> tuple[str, ...]:
+    """Observed US equity sessions using SPY daily bars. No weekday/holiday guessing."""
+    try:
+        data = yf.download(
+            "SPY",
+            start=start_date,
+            end=end_date_exclusive,
+            interval="1d",
+            auto_adjust=False,
+            progress=False,
+        )
+        if data is None or data.empty:
+            return ()
+        return tuple(sorted({pd.Timestamp(idx).date().isoformat() for idx in data.index}))
+    except Exception:
+        return ()
 
 
 def effective_price(row: dict[str, Any], live: dict[str, tuple[float, str]]) -> tuple[float | None, str]:
@@ -215,6 +250,8 @@ with st.sidebar:
 **C** · RESEARCH ONLY · non operativo")
     with st.expander("Costs & open P&L"):
         st.markdown("Open Net P&L sottrae solo i costi di entrata già sostenuti. Il costo round-trip completo resta una stima separata. Closed Net P&L include entrata + uscita.")
+    with st.expander("Holding period"):
+        st.markdown("`Opened` mostra il giorno di apertura. `Trading Days Open` conta solo sessioni USA effettivamente osservate su SPY, con la sessione di apertura = 0. Nei trade chiusi mostriamo anche `Closed` e `Trading Days`.")
     with st.expander("Data Quality & Gates"):
         st.markdown("**RED** = veto. **YELLOW** = ammesso solo B/C, mai A. DATA GATES riguardano i dati; POLICY GATES riguardano score, trigger, R/R, Max Buy, earnings e altre regole.")
 
@@ -239,6 +276,12 @@ open_symbols = tuple(sorted({str(p.get("symbol") or "").upper() for p in open_po
 live = market_prices(open_symbols)
 cur_tier = Counter(tier_of(r) for r in cur if tier_of(r))
 cur_status = Counter(str(r.get("status") or "N/D").upper() for r in cur)
+
+opened_dates = [str(opened_at_of(p))[:10] for p in positions if opened_at_of(p)]
+today = datetime.now().date()
+market_sessions: tuple[str, ...] = ()
+if opened_dates:
+    market_sessions = market_session_dates(min(opened_dates), (today + timedelta(days=1)).isoformat())
 
 open_net_values: list[float] = []
 for p in open_pos:
@@ -313,16 +356,26 @@ for p in open_pos:
     px, source = effective_price(p, live)
     entry = n(p.get("entry_price"))
     qty = n(p.get("qty"))
+    opened_at = opened_at_of(p)
+    trading_days_open = trading_days_elapsed(opened_at, today.isoformat(), market_sessions)
     price_pnl = gross_price_pnl(entry, px, qty)
     move = gross_price_return_pct(entry, px)
     net_open = open_net_pnl(entry, px, qty, COMMISSION, SLIPPAGE_BPS)
     est_cost = estimated_round_trip_cost(entry, px, qty, COMMISSION, SLIPPAGE_BPS)
     tier = tier_of(p) or j(p.get("details")).get("paper_tier") or "N/D"
-    state = open_trade_state(entry, px, qty, p.get("opened_at") or p.get("created_at"))
+    state = open_trade_state(
+        entry,
+        px,
+        qty,
+        opened_at,
+        trading_days_open=trading_days_open,
+    )
     open_rows.append({
         "Ticker": p.get("symbol"),
         "Strategy": strategy_label(p.get("strategy")),
         "Tier": f"C 🔬" if str(tier) == "C" else tier,
+        "Opened": date_label(opened_at),
+        "Trading Days Open": trading_days_open,
         "Entry $": entry,
         "Current $": px,
         "Price Move %": move,
@@ -339,13 +392,13 @@ for p in open_pos:
         "Open Price P&L $": price_pnl,
         "Open Net P&L $": net_open,
         "Est. Round-Trip Cost $": est_cost,
-        "Opened At": p.get("opened_at") or p.get("created_at"),
+        "Opened At": opened_at,
     })
 
 if open_rows:
     open_df = pd.DataFrame(open_rows)
     st.dataframe(fmt(open_df), width="stretch", hide_index=True)
-    st.caption("Status is based on the underlying price move. Trades inside the estimated cost band during the first 2 days are shown as OPEN · TOO EARLY, not as an immediate loss verdict.")
+    st.caption("Trading Days Open uses observed SPY sessions; opening day = 0. OPEN · TOO EARLY uses the same trading-day age, not calendar days.")
     with st.expander("ℹ️ Cost & price-source details", expanded=False):
         st.dataframe(fmt(pd.DataFrame(cost_rows)), width="stretch", hide_index=True)
         st.caption("Estimated Round-Trip Cost is shown for context only. It is not pre-booked as a future exit loss in Open Net P&L.")
@@ -364,10 +417,16 @@ for p in closed_pos:
     pnlv = closed_pnl(p)
     ret = closed_return(p, pnlv)
     tier = tier_of(p) or j(p.get("details")).get("paper_tier") or "N/D"
+    opened_at = opened_at_of(p)
+    closed_at = closed_at_of(p)
+    trading_days = trading_days_elapsed(opened_at, closed_at, market_sessions)
     closed_rows.append({
         "Ticker": p.get("symbol"),
         "Strategy": strategy_label(p.get("strategy")),
         "Tier": f"C 🔬" if str(tier) == "C" else tier,
+        "Opened": date_label(opened_at),
+        "Closed": date_label(closed_at),
+        "Trading Days": trading_days,
         "Entry $": n(p.get("entry_price")),
         "Current $": n(p.get("exit_price")) or n(p.get("last_price")),
         "Closed Net P&L $": pnlv,
@@ -426,6 +485,6 @@ with st.expander("Diagnostics · Gate Analysis", expanded=False):
     ]), width="stretch", hide_index=True)
 
 st.caption(
-    f"OPEN prices: Yahoo 1m → Yahoo close → DB → Entry · Entry cost: $9.90 + {SLIPPAGE_BPS:.0f} bps · "
+    f"OPEN prices: Yahoo 1m → Yahoo close → DB → Entry · Holding age: observed SPY trading sessions · Entry cost: $9.90 + {SLIPPAGE_BPS:.0f} bps · "
     f"Closed round-trip cost: $9.90/side + {SLIPPAGE_BPS:.0f} bps/side · Updated {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S %Z')}"
 )
