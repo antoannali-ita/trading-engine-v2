@@ -79,14 +79,20 @@ def _entry_and_trigger(strategy: str, last) -> tuple[float, str, str]:
         entry = sma50 or sma20 or price
         confirmed = sma50 is not None and sma200 is not None and price > sma50 > sma200
         return entry, "CONFIRMED" if confirmed else "WAITING", "Pullback/continuazione sopra SMA50>SMA200"
+    if strategy == "trend_fib_pullback_v1":
+        # The generator is binary: score=100 only after the pivot-safe Fibonacci
+        # zone reaction and breakout confirmation have already occurred. Do not
+        # re-label a confirmed Fib setup as generic low-vol.
+        return price, "CONFIRMED", "Fib 38.2-61.8 pullback + bullish confirmation + breakout"
     if strategy == "cross_sectional_momentum":
         entry = high20 or price
         confirmed = high20 is not None and price >= high20
         return entry, "CONFIRMED" if confirmed else "WAITING", "Breakout del massimo 20 giorni"
-    if strategy == "short_term_reversal":
+    if strategy in {"short_term_reversal_rsi35", "short_term_reversal_rsi45"}:
+        threshold = 35.0 if strategy.endswith("rsi35") else 45.0
         entry = price
-        confirmed = (ret1 is not None and ret1 > 0) and (rsi is not None and rsi < 45)
-        return entry, "CONFIRMED" if confirmed else "WAITING", "Stabilizzazione dopo eccesso ribassista"
+        confirmed = (ret1 is not None and ret1 > 0) and (rsi is not None and rsi < threshold)
+        return entry, "CONFIRMED" if confirmed else "WAITING", f"Stabilizzazione dopo eccesso ribassista RSI<{int(threshold)}"
     entry = sma20 or price
     confirmed = sma200 is not None and price > sma200
     return entry, "CONFIRMED" if confirmed else "WAITING", "Low-vol sopra trend strutturale"
@@ -311,9 +317,6 @@ def main() -> int:
         print(f"FATAL: cannot read active paper positions: {exc}")
         return 1
 
-    # Lifecycle must not depend on the current candidate universe. If a ticker is
-    # removed from LAB_SYMBOLS, an already-open paper position still needs stop/TP
-    # checks. Candidate generation remains restricted to configured_symbols.
     for lifecycle_symbol in _extra_lifecycle_symbols(configured_symbols, open_positions):
         try:
             lifecycle_prices = download_prices(MarketDataRequest(symbol=lifecycle_symbol, start="2024-01-01"))
@@ -358,11 +361,6 @@ def main() -> int:
                     continue
 
                 ideal_entry, trigger, setup_note = _entry_and_trigger(strategy, last)
-
-                # Research paper execution is deliberately at the observable market
-                # close. Keep ideal_entry separately for setup diagnostics. The old
-                # code mixed SMA/high20 ideal entry with a stop built from market
-                # price, which created false STOP_INVALID / BLOCKED_DATA records.
                 execution_entry = price
                 risk_per_share = 2.0 * atr
                 stop = execution_entry - risk_per_share
@@ -390,9 +388,6 @@ def main() -> int:
                     max_buy=max_buy, atr=atr, rr_net=rr_net_tp2,
                     trigger=trigger, earnings_days=earnings_days,
                 )
-
-                # Keep the old strict gate for diagnosis. It no longer decides alone
-                # whether a research paper trade may be opened.
                 strict_trade_gate = trade_eligibility(
                     data_quality=dq, trigger=trigger, price=price, max_buy=max_buy,
                     rr_net=rr_net_tp2, earnings_days=earnings_days, event_driven=False,
@@ -502,8 +497,6 @@ def main() -> int:
             symbol_failures += 1
             print(f"{symbol}: {exc}")
 
-    # Rank after the full scan so paper capacity is not consumed simply by the
-    # alphabetical order of LAB_SYMBOLS. A first, then B/C, then score quality.
     tier_rank = {"A": 0, "B": 1, "C": 2}
     candidates.sort(key=lambda r: (
         tier_rank.get(str(r.get("tier") or ""), 9),
