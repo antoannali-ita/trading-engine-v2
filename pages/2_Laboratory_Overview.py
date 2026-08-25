@@ -342,6 +342,7 @@ for p in open_pos:
         "TP1 $": tp1,
         "TP2 $": tp2,
         "Risk to Stop %": risk_pct,
+        "Open Risk $": risk,
         "Source": source,
         "Price P&L $": price_pnl,
         "Entry Cost $": entry_cost(entry, qty),
@@ -390,10 +391,11 @@ else:
     st.dataframe(fmt(shown), width="stretch", hide_index=True)
     st.caption("Trading Days counts verified SPY market sessions from the entry date. Fineco-style summary without Bid/Ask/Volume. Min/Max use the available Yahoo session snapshot; '-' means the daily range could not be verified from the current feed.")
     with st.expander("Risk & Cost Audit"):
-        audit = open_df[[
+        audit_cols = [
             "Ticker", "Source", "Capital $", "Open Risk $", "Price P&L $",
             "Entry Cost $", "Est. Exit Cost $", "Net P&L $",
-        ]]
+        ]
+        audit = open_df[[c for c in audit_cols if c in open_df.columns]]
         st.dataframe(fmt(audit), width="stretch", hide_index=True)
         st.caption("Open Net P&L uses only entry costs already incurred. Estimated exit costs are shown separately and are not used for the open-trade economic result.")
 
