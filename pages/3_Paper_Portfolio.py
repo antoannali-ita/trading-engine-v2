@@ -21,14 +21,15 @@ try:
 except ModuleNotFoundError:
     import dashboard.data_access as data_access
 
-st.set_page_config(page_title="Paper Portfolio", page_icon="📒", layout="wide")
+st.set_page_config(page_title="Live Paper Trades", page_icon="📒", layout="wide")
 
 
 def j(value: Any) -> dict:
     if isinstance(value, dict):
         return value
     try:
-        return json.loads(str(value)) if value else {}
+        parsed = json.loads(str(value)) if value else {}
+        return parsed if isinstance(parsed, dict) else {}
     except Exception:
         return {}
 
@@ -69,10 +70,14 @@ def gross_rr(entry, stop, tp2):
 def fmt_table(frame: pd.DataFrame):
     formats: dict[str, str] = {}
     for col in frame.columns:
-        if col in {"Entry", "Ideal Entry", "Current / Exit", "Notional", "Stop", "TP1", "TP2", "Projected Net P&L 12", "Projected Net P&L 9.90"}:
+        if col in {"Fill", "Ideal Entry", "Current / Exit", "Notional", "Stop", "TP1", "TP2", "Projected Net P&L 12", "Projected Net P&L 9.90"}:
             formats[col] = "{:.2f}"
+        elif col in {"MTM R", "Risk R", "Locked R", "Realized R"}:
+            formats[col] = "{:+.2f}"
         elif "%" in col:
             formats[col] = "{:.2f}%"
+        elif col == "Qty":
+            formats[col] = "{:.0f}"
         elif pd.api.types.is_float_dtype(frame[col]):
             formats[col] = "{:.2f}"
     styler = frame.style.format(formats, na_rep="-")
@@ -81,7 +86,7 @@ def fmt_table(frame: pd.DataFrame):
         if value is None or value == 0:
             return ""
         return "color:#15803d;font-weight:700;" if value > 0 else "color:#dc2626;font-weight:700;"
-    for col in ["Move %", "Projected Net P&L 12", "Projected Net P&L 9.90"]:
+    for col in ["Move %", "MTM R", "Realized R", "Locked R", "Projected Net P&L 12", "Projected Net P&L 9.90"]:
         if col in frame.columns:
             styler = styler.map(color, subset=[col])
     return styler
@@ -92,31 +97,42 @@ def load_positions():
     return data_access.lab_paper_positions(10000)
 
 
-st.title("📒 Paper Portfolio")
-st.caption("Detailed paper-trade ledger. PAPER only; this page does not modify Production or send broker orders.")
+@st.cache_data(ttl=60, show_spinner=False)
+def load_ticker_snapshot():
+    return data_access.lab_strategy_ticker_snapshots(2000)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def load_events():
+    return data_access.lab_paper_events(10000)
+
+
+st.title("📒 Live Paper Trades")
+st.caption("Operational Laboratory ledger: open/closed paper trades, normalized risk and lifecycle. PAPER only; no broker orders are sent.")
 
 with st.sidebar:
-    st.markdown("## Guida · Paper Portfolio")
+    st.markdown("## Guida · Live Paper Trades")
     with st.expander("A cosa serve", expanded=True):
-        st.markdown("Qui trovi **il dettaglio di ogni paper trade**, aperto o chiuso: entry, prezzo corrente, quantità, stop, target, R/R e P&L stimato. È il registro operativo del Laboratory.")
-    with st.expander("Come leggere i colori"):
-        st.markdown("**Verde** = movimento/P&L positivo.  \n**Rosso** = movimento/P&L negativo.  \nLo stato OPEN/CLOSED indica il ciclo della posizione, non se il trade è buono o cattivo.")
-    with st.expander("Projected Net P&L"):
-        st.markdown("Per una posizione OPEN è una **simulazione di uscita adesso**: include quindi ingresso + uscita stimata. Non va confuso con l'Open Net P&L della Overview, che sottrae solo i costi già sostenuti all'ingresso.")
+        st.markdown("Qui vedi **quali titoli stanno realmente girando nel paper test**, con strategia, Tier, fill, prezzo corrente, stop/target, P&L e metriche R quando lo snapshot 2.2 è disponibile.")
+    with st.expander("Fill vs Ideal Entry"):
+        st.markdown("**Fill** è il prezzo paper effettivo e la base per performance/R. **Ideal Entry** resta diagnostico: serve a misurare la qualità del setup, non sostituisce l'eseguito.")
+    with st.expander("MTM / Risk / Locked R"):
+        st.markdown("**MTM R** = risultato aperto normalizzato. **Risk R** = capitale ancora esposto fino allo stop corrente. **Locked R** = profitto già protetto dallo stop.")
+    with st.expander("Lifecycle"):
+        st.markdown("Il dettaglio eventi viene caricato solo quando richiesto: OPEN, TP1, stop moved, TP2/STOP e CLOSED.")
     with st.expander("Costi"):
         st.markdown(f"Scenario corrente: **${CURRENT_COMMISSION_PER_SIDE:.2f} per lato**. Scenario futuro: **${DISCOUNT_COMMISSION_PER_SIDE:.2f} per lato**. Slippage: **{SLIPPAGE_BPS:.0f} bps**.")
-    with st.expander("R/R e livelli"):
-        st.markdown("**Gross R/R TP2** confronta il guadagno potenziale verso TP2 con il rischio fino allo stop. Stop, TP1 e TP2 sono quelli salvati dal motore per quella posizione.")
 
-try:
-    positions = load_positions()
-except Exception as exc:
-    st.error(f"Unable to read paper portfolio: {type(exc).__name__}: {exc}")
-    st.stop()
-
+positions = load_positions()
 if not positions:
     st.info("No paper positions available.")
     st.stop()
+
+snapshots = load_ticker_snapshot()
+snapshot_map = {
+    (str(x.get("symbol") or "").upper(), str(x.get("strategy") or "")): x
+    for x in snapshots
+}
 
 open_symbols = tuple(sorted({str(p.get("symbol") or "").upper() for p in positions if str(p.get("status") or "").upper() in {"OPEN", "TP1_HIT"} and p.get("symbol")}))
 market_prices = live_prices(open_symbols)
@@ -127,71 +143,96 @@ for p in positions:
     cost = j(d.get("cost_model"))
     status = str(p.get("status") or "N/D").upper()
     ticker = str(p.get("symbol") or "").upper()
-    entry = n(p.get("entry_price"))
+    strategy = str(p.get("strategy") or "")
+    fill = n(p.get("fill_price")) or n(p.get("entry_price"))
     qty = n(p.get("qty"))
+    snap = snapshot_map.get((ticker, strategy), {})
     if status in {"OPEN", "TP1_HIT"}:
         current = market_prices.get(ticker)
-        last = current if current is not None else (n(p.get("last_price")) or entry)
+        last = current if current is not None else (n(p.get("last_price")) or fill)
         source = "LIVE 1M" if current is not None else "DB FALLBACK"
     else:
-        last = n(p.get("exit_price")) or n(p.get("last_price")) or entry
+        last = n(p.get("exit_price")) or n(p.get("last_price")) or fill
         source = "CLOSED"
-    capital = n(p.get("capital")) or ((entry or 0) * (qty or 0))
-    move_pct = ((last / entry) - 1) * 100 if last is not None and entry else None
+    capital = n(p.get("capital")) or ((fill or 0) * (qty or 0))
+    move_pct = ((last / fill) - 1) * 100 if last is not None and fill else None
     if status == "CLOSED":
-        pnl12 = closed_net_pnl(entry, last, qty, CURRENT_COMMISSION_PER_SIDE, SLIPPAGE_BPS)
-        pnl990 = closed_net_pnl(entry, last, qty, DISCOUNT_COMMISSION_PER_SIDE, SLIPPAGE_BPS)
+        pnl12 = closed_net_pnl(fill, last, qty, CURRENT_COMMISSION_PER_SIDE, SLIPPAGE_BPS)
+        pnl990 = closed_net_pnl(fill, last, qty, DISCOUNT_COMMISSION_PER_SIDE, SLIPPAGE_BPS)
     else:
-        pnl12 = projected_round_trip_pnl(entry, last, qty, CURRENT_COMMISSION_PER_SIDE, SLIPPAGE_BPS)
-        pnl990 = projected_round_trip_pnl(entry, last, qty, DISCOUNT_COMMISSION_PER_SIDE, SLIPPAGE_BPS)
+        pnl12 = projected_round_trip_pnl(fill, last, qty, CURRENT_COMMISSION_PER_SIDE, SLIPPAGE_BPS)
+        pnl990 = projected_round_trip_pnl(fill, last, qty, DISCOUNT_COMMISSION_PER_SIDE, SLIPPAGE_BPS)
     rows.append({
-        "Opened": p.get("opened_at") or p.get("created_at"),
+        "Opened": data_access.utc_label(p.get("opened_at") or p.get("created_at")),
         "Ticker": ticker,
-        "Strategy": p.get("strategy"),
-        "Tier": d.get("paper_tier") or "N/D",
+        "Strategy": strategy,
+        "Tier": d.get("paper_tier") or j(d.get("paper_policy")).get("tier") or "N/D",
         "Status": status,
-        "Entry": entry,
-        "Ideal Entry": n(d.get("ideal_entry")),
+        "Fill": fill,
+        "Ideal Entry": n(p.get("ideal_entry")) or n(d.get("ideal_entry")),
         "Current / Exit": last,
         "Price Source": source,
         "Move %": move_pct,
+        "MTM R": n(snap.get("mtm_r")) if status in {"OPEN", "TP1_HIT"} else None,
+        "Risk R": n(snap.get("open_risk_r")) if status in {"OPEN", "TP1_HIT"} else None,
+        "Locked R": n(snap.get("locked_profit_r")) if status in {"OPEN", "TP1_HIT"} else None,
+        "Realized R": n(p.get("realized_r")) if status == "CLOSED" else None,
         "Qty": qty,
         "Notional": capital,
         "Stop": n(p.get("stop_current")) or n(p.get("stop_initial")),
         "TP1": n(p.get("tp1")),
         "TP2": n(p.get("tp2")),
-        "Gross R/R TP2": n(cost.get("gross_rr")) or gross_rr(entry, p.get("stop_initial"), p.get("tp2")),
+        "Gross R/R TP2": n(cost.get("gross_rr")) or gross_rr(fill, p.get("stop_initial"), p.get("tp2")),
         "Projected Net P&L 12": pnl12,
         "Projected Net P&L 9.90": pnl990,
         "Exit Reason": p.get("exit_reason"),
+        "Position ID": p.get("id"),
     })
 
 df = pd.DataFrame(rows)
 open_mask = df["Status"].isin(["OPEN", "TP1_HIT"])
 closed_mask = df["Status"].eq("CLOSED")
 
-m = st.columns(5)
+m = st.columns(6)
 m[0].metric("Total Positions", len(df))
 m[1].metric("Open", int(open_mask.sum()))
 m[2].metric("Closed", int(closed_mask.sum()))
-m[3].metric("Tier C", int((df["Tier"] == "C").sum()))
-m[4].metric("Strategies", df["Strategy"].nunique())
+m[3].metric("Open MTM R", f"{df.loc[open_mask, 'MTM R'].dropna().sum():+.2f}R" if df.loc[open_mask, "MTM R"].notna().any() else "N/D")
+m[4].metric("Open Risk R", f"{df.loc[open_mask, 'Risk R'].dropna().sum():.2f}R" if df.loc[open_mask, "Risk R"].notna().any() else "N/D")
+m[5].metric("Strategies", df["Strategy"].nunique())
 
 status_filter = st.multiselect("Status", sorted(df["Status"].dropna().astype(str).unique()), default=sorted(df["Status"].dropna().astype(str).unique()))
 tier_filter = st.multiselect("Tier", sorted(df["Tier"].dropna().astype(str).unique()), default=sorted(df["Tier"].dropna().astype(str).unique()))
 shown = df[df["Status"].astype(str).isin(status_filter) & df["Tier"].astype(str).isin(tier_filter)]
-st.dataframe(fmt_table(shown), width="stretch", hide_index=True)
+st.dataframe(fmt_table(shown.drop(columns=["Position ID"])), width="stretch", hide_index=True)
 
 st.subheader("Virtual Concentration by Risk Key")
 risk_rows = []
 for p in positions:
     d = j(p.get("details"))
     ticker = str(p.get("symbol") or "").upper()
-    entry = n(p.get("entry_price")) or 0.0
+    entry = n(p.get("fill_price")) or n(p.get("entry_price")) or 0.0
     qty = n(p.get("qty")) or 0.0
     risk_rows.append({"Risk Key": d.get("risk_key") or f"EQUITY:{ticker}", "Notional": n(p.get("capital")) or entry * qty})
 risk = pd.DataFrame(risk_rows).groupby("Risk Key", as_index=False).agg(Positions=("Risk Key", "count"), Notional=("Notional", "sum"))
 st.dataframe(fmt_table(risk.sort_values("Notional", ascending=False)), width="stretch", hide_index=True)
 
-st.caption("Question answered by this page: What paper trades are actually open or closed?")
+show_lifecycle = st.toggle("Load Trade Lifecycle", value=False)
+if show_lifecycle:
+    selected_position = st.selectbox(
+        "Position",
+        [int(x) for x in df["Position ID"].dropna().tolist()],
+        format_func=lambda pid: f"#{pid} · {df.loc[df['Position ID'] == pid, 'Ticker'].iloc[0]} · {df.loc[df['Position ID'] == pid, 'Strategy'].iloc[0]}",
+    )
+    events = [e for e in load_events() if int(e.get("position_id") or -1) == int(selected_position)]
+    if events:
+        event_df = pd.DataFrame([{
+            "Time": data_access.utc_label(e.get("created_at")), "Event": e.get("event_type"), "Price": n(e.get("price")),
+            "Old Stop": n(e.get("old_stop")), "New Stop": n(e.get("new_stop")), "Note": e.get("note")
+        } for e in sorted(events, key=lambda x: str(x.get("created_at") or ""))])
+        st.dataframe(fmt_table(event_df), width="stretch", hide_index=True)
+    else:
+        st.info("No lifecycle events recorded for this position.")
+
+st.caption("Question answered by this page: What paper trades are open/closed, how are they performing, and what happened during their lifecycle?")
 st.caption(f"Updated: {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S %Z')}")
