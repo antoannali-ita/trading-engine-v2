@@ -113,15 +113,26 @@ def open_status(current: float | None, stop: float | None, tp1: float | None, tp
 
 
 def fmt(frame: pd.DataFrame):
-    formats = {}
+    formats: dict[str, str] = {}
     for c in frame.columns:
-        if c in {"Current $", "Net P&L $", "Capital $", "Open Risk $", "Stop $"}:
+        if c in {"Current $", "Net P&L $", "Capital $", "Open Risk $", "Stop $", "Price P&L $", "Entry Cost $", "Est. Exit Cost $"}:
             formats[c] = "{:.2f}"
         elif "%" in c:
             formats[c] = "{:.2f}%"
         elif pd.api.types.is_float_dtype(frame[c]):
             formats[c] = "{:.2f}"
-    return frame.style.format(formats, na_rep="-")
+    styler = frame.style.format(formats, na_rep="-")
+
+    def pnl_color(v: Any) -> str:
+        value = n(v)
+        if value is None or value == 0:
+            return ""
+        return "color:#15803d;font-weight:700;" if value > 0 else "color:#dc2626;font-weight:700;"
+
+    for col in ["Net P&L $", "Net %", "Price P&L $", "Avg Return %"]:
+        if col in frame.columns:
+            styler = styler.map(pnl_color, subset=[col])
+    return styler
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -133,14 +144,15 @@ st.title("🔬 Laboratory · Live Overview")
 st.caption("Executive paper-trading view: how the Laboratory is doing right now. PAPER only; no real broker orders are generated here.")
 
 with st.sidebar:
-    st.markdown("## How to read this page")
-    st.markdown(
-        f"**Open Net P&L** subtracts only costs already incurred at entry. Estimated exit costs are not used to label an open trade as profit/loss.\n\n"
-        f"**Current cost model:** ${CURRENT_COMMISSION_PER_SIDE:.2f} per side + {SLIPPAGE_BPS:.0f} bps slippage.\n\n"
-        f"**Future discount scenario:** ${DISCOUNT_COMMISSION_PER_SIDE:.2f} per side.\n\n"
-        "**Open Risk** is the remaining downside from current price to the stored stop.\n\n"
-        "Status values are derived only from implemented states and stored Stop/TP levels."
-    )
+    st.markdown("## Guida · Laboratory Overview")
+    with st.expander("A cosa serve", expanded=True):
+        st.markdown("Questa è la pagina **più semplice** del Laboratory. Serve a capire rapidamente quante posizioni paper sono aperte, quanto capitale virtuale è impegnato, quanto stanno guadagnando/perdendo e quanto rischio resta fino agli stop.")
+    with st.expander("Come leggere i KPI"):
+        st.markdown("**Capital Deployed** = capitale paper impegnato.  \n**Open Net P&L** = risultato aperto meno i soli costi già sostenuti all'ingresso.  \n**Open Risk** = perdita teorica dal prezzo attuale allo stop memorizzato.  \n**Realized Net P&L** = risultato netto delle operazioni già chiuse.  \n**Win Rate** = percentuale di trade chiusi in utile.")
+    with st.expander("Come leggere la tabella"):
+        st.markdown("**Verde** = valore positivo. **Rosso** = valore negativo.  \n**Risk to Stop %** indica quanto manca allo stop.  \n**NEAR STOP / NEAR TP1 / NEAR TP2** significa che il prezzo è entro circa il 2% dal relativo livello.  \nNon viene mostrato TRAILING finché il motore non implementa davvero una logica trailing.")
+    with st.expander("Costi e prezzi"):
+        st.markdown(f"Costo corrente USA: **${CURRENT_COMMISSION_PER_SIDE:.2f} per lato** + **{SLIPPAGE_BPS:.0f} bps** di slippage. Scenario futuro: **${DISCOUNT_COMMISSION_PER_SIDE:.2f} per lato**. I prezzi OPEN seguono la gerarchia Yahoo live → DB → Entry fallback.")
 
 try:
     positions = load_positions()
@@ -220,6 +232,11 @@ k[3].metric("Open Risk", f"${open_risk_total:,.2f}")
 k[4].metric("Realized Net P&L", f"${realized_total:,.2f}")
 k[5].metric("Win Rate", f"{win_rate:.2f}%" if win_rate is not None else "N/D")
 
+if open_net_total > 0:
+    st.success(f"Open P&L is positive: +${open_net_total:,.2f}")
+elif open_net_total < 0:
+    st.error(f"Open P&L is negative: -${abs(open_net_total):,.2f}")
+
 st.subheader("Open Paper Positions")
 open_df = pd.DataFrame(rows)
 if open_df.empty:
@@ -227,7 +244,7 @@ if open_df.empty:
 else:
     shown = open_df[["Ticker", "Strategy", "Tier", "Current $", "Net P&L $", "Net %", "Risk to Stop %", "Open Risk $", "Status"]]
     st.dataframe(fmt(shown), width="stretch", hide_index=True)
-    with st.expander("Cost audit · entry costs vs estimated exit costs"):
+    with st.expander("Cost Audit · Entry vs Estimated Exit Costs"):
         audit = open_df[["Ticker", "Source", "Price P&L $", "Entry Cost $", "Est. Exit Cost $", "Net P&L $"]]
         st.dataframe(fmt(audit), width="stretch", hide_index=True)
         st.caption("Open Net P&L uses only entry costs already incurred. Estimated exit costs are shown separately and are not used for the open status badge.")
