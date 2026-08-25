@@ -13,14 +13,17 @@ def _iso_now() -> str:
 
 
 def latest_completed_run(client) -> dict[str, Any] | None:
-    response = (
-        client.table("lab_aggregation_runs")
-        .select("*")
-        .eq("status", "COMPLETED")
-        .order("completed_at", desc=True)
-        .limit(1)
-        .execute()
-    )
+    try:
+        response = (
+            client.table("lab_aggregation_runs")
+            .select("*")
+            .eq("status", "COMPLETED")
+            .order("completed_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        raise SnapshotWriteError(f"lab_aggregation_runs unavailable: {exc}") from exc
     return response.data[0] if response.data else None
 
 
@@ -54,7 +57,10 @@ def write_atomic_snapshot(
         "validation_status": "PENDING",
         "details": details or {},
     }
-    response = client.table("lab_aggregation_runs").insert(run_payload).execute()
+    try:
+        response = client.table("lab_aggregation_runs").insert(run_payload).execute()
+    except Exception as exc:
+        raise SnapshotWriteError(f"lab_aggregation_runs insert failed: {exc}") from exc
     if not response.data:
         raise SnapshotWriteError("aggregation run insert returned no row")
     run_id = int(response.data[0]["id"])
@@ -73,7 +79,6 @@ def write_atomic_snapshot(
                 item = dict(row)
                 item.update({"aggregation_run_id": run_id, "session": session, "updated_at": _iso_now()})
                 item.pop("id", None)
-                # UI-only helper is not part of the persisted schema.
                 item.pop("main_blocker_label", None)
                 item.pop("tier_a", None)
                 item.pop("tier_b", None)
