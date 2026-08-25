@@ -1,6 +1,6 @@
 {
   "as_of_source": "User-provided Fineco portfolio snapshot",
-  "notes": "Quantities are current residual positions. Live prices and FX are refreshed by the dashboard; snapshot prices are fallback only.",
+  "notes": "Quantities are current residual positions. Live prices and FX are refreshed by the dashboard; snapshot prices are fallback only. quote_currency identifies the native Yahoo Finance quote currency when it is not USD.",
   "equities": [
     {"market":"NASDAQ","ticker":"ARRY","name":"ARRAY TECH","quantity":136,"avg_price_usd":23.00,"target_usd":42.00,"snapshot_price_usd":4.50},
     {"market":"NYSE","ticker":"F","name":"FORD MOTOR","quantity":50,"avg_price_usd":12.13,"target_usd":21.00,"snapshot_price_usd":13.96},
@@ -9,7 +9,8 @@
     {"market":"NYSE","ticker":"TAP","name":"MOLSON COORS RG-B","quantity":45,"avg_price_usd":64.99,"target_usd":92.00,"snapshot_price_usd":43.22},
     {"market":"NASDAQ","ticker":"PYPL","name":"PAYPAL HOLDINGS","quantity":50,"avg_price_usd":62.16,"target_usd":85.00,"snapshot_price_usd":61.78},
     {"market":"NYSE","ticker":"CF","name":"CF INDUSTRIES HL","quantity":21,"avg_price_usd":114.23,"target_usd":130.00,"snapshot_price_usd":128.70},
-    {"market":"NASDAQ","ticker":"CSCO","name":"CISCO","quantity":44,"avg_price_usd":109.54,"target_usd":124.50,"snapshot_price_usd":110.74}
+    {"market":"NASDAQ","ticker":"CSCO","name":"CISCO","quantity":44,"avg_price_usd":109.54,"target_usd":124.50,"snapshot_price_usd":110.74},
+    {"market":"BIT","ticker":"BPE.MI","name":"BPER BANCA","quantity":140,"avg_price_usd":12.13,"target_usd":12.94,"snapshot_price_usd":12.21,"quote_currency":"EUR","snapshot_price_native":14.25}
   ],
   "fx_positions": [
     {"pair":"USD/EUR","quantity_usd":18000.0,"avg_rate_eur_per_usd":0.93,"target_rate_eur_per_usd":0.95,"snapshot_rate_eur_per_usd":0.86}
