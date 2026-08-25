@@ -28,6 +28,34 @@ def distance_pct(reference: Any, current: Any) -> float | None:
     return ((ref / cur) - 1.0) * 100.0
 
 
+def target_distance_pct(current: Any, target: Any) -> float | None:
+    """Signed progress versus target: negative below target, positive above target."""
+    cur = as_float(current)
+    tgt = as_float(target)
+    if cur is None or tgt in (None, 0):
+        return None
+    return ((cur / tgt) - 1.0) * 100.0
+
+
+def target_gap_usd(current: Any, target: Any) -> float | None:
+    """Signed dollar gap versus target: negative to-go amount, positive excess above target."""
+    cur = as_float(current)
+    tgt = as_float(target)
+    if cur is None or tgt is None:
+        return None
+    return cur - tgt
+
+
+def target_status(current: Any, target: Any) -> str:
+    cur = as_float(current)
+    tgt = as_float(target)
+    if cur is None or tgt is None:
+        return "N/D"
+    if cur >= tgt:
+        return "🎯 TARGET HIT"
+    return "BELOW TARGET"
+
+
 def distance_to_stop_pct(current: Any, stop: Any) -> float | None:
     cur = as_float(current)
     stop_value = as_float(stop)
