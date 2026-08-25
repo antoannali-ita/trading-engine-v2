@@ -23,7 +23,7 @@ from common_utility.production_portfolio_metrics import (
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config" / "production_portfolio.json"
 
-st.set_page_config(page_title="Portafoglio Reale", page_icon="💰", layout="wide")
+st.set_page_config(page_title="Production Portfolio", page_icon="💰", layout="wide")
 
 
 def _load_config() -> dict[str, Any]:
@@ -91,20 +91,20 @@ def _status_label(v: Any) -> str:
     except (TypeError, ValueError):
         return "⚪ N/D"
     if x > 0:
-        return "🟢 GUADAGNO"
+        return "🟢 PROFIT"
     if x < 0:
-        return "🔴 PERDITA"
-    return "⚪ PARI"
+        return "🔴 LOSS"
+    return "⚪ FLAT"
 
 
 def _production_style(frame: pd.DataFrame):
     fmt: dict[str, str] = {}
     money_cols = {
-        "PMC $", "Prezzo $", "Valore $", "Valore €", "P&L $", "P&L €",
+        "Average Price $", "Current Price $", "Value $", "Value €", "P&L $", "P&L €",
         "Stop $", "Risk to Stop $", "Target $",
     }
-    pct_cols = {"P&L %", "Dist. Stop %", "Dist. Target %", "Peso %"}
-    fx_cols = {"PMC USD/EUR", "Cambio USD/EUR", "Target USD/EUR"}
+    pct_cols = {"P&L %", "Distance to Stop %", "Distance to Target %", "Weight %"}
+    fx_cols = {"Average USD/EUR", "Current USD/EUR", "Target USD/EUR"}
     for col in frame.columns:
         if col in money_cols or col in fx_cols:
             fmt[col] = "{:.2f}"
@@ -157,37 +157,37 @@ for r in equities:
     risk_stop = risk_to_stop_usd(qty, px, stop)
     rows.append({
         "Ticker": ticker,
-        "Nome": r.get("name", ""),
-        "Mercato": r.get("market", ""),
+        "Company": r.get("name", ""),
+        "Market": r.get("market", ""),
         "Qty": qty,
-        "PMC $": avg,
-        "Prezzo $": px,
-        "Fonte": source,
-        "Valore $": value_usd,
-        "Valore €": value_eur,
+        "Average Price $": avg,
+        "Current Price $": px,
+        "Source": source,
+        "Value $": value_usd,
+        "Value €": value_eur,
         "P&L $": pnl_usd,
         "P&L €": pnl_eur,
         "P&L %": position_pnl_pct,
-        "Esito": _status_label(pnl_usd),
+        "Status": _status_label(pnl_usd),
         "Stop $": stop,
-        "Dist. Stop %": dist_stop,
+        "Distance to Stop %": dist_stop,
         "Risk to Stop $": risk_stop,
         "Target $": target,
-        "Dist. Target %": dist_target,
-        "Stato": "OPEN" if qty > 0 else "CLOSED",
+        "Distance to Target %": dist_target,
+        "Position State": "OPEN" if qty > 0 else "CLOSED",
     })
 
 df = pd.DataFrame(rows)
 
-st.title("💰 Portafoglio Reale · Production")
+st.title("💰 Production Portfolio")
 st.caption(
-    "Capitale reale. Separato dal Laboratory paper/research. Prezzi e cambio sono aggiornati quando disponibili; "
+    "Capitale reale, separato dal Laboratory paper/research. Prezzi e cambio sono aggiornati quando disponibili; "
     "gli snapshot configurati sono solo fallback."
 )
 
 if not df.empty:
-    total_usd = float(df["Valore $"].sum())
-    total_cost_usd = float((df["PMC $"] * df["Qty"]).sum())
+    total_usd = float(df["Value $"].sum())
+    total_cost_usd = float((df["Average Price $"] * df["Qty"]).sum())
     total_pnl_usd = float(df["P&L $"].sum())
     total_pnl_pct = pnl_pct(total_usd, total_cost_usd)
     total_eur = usd_to_eur(total_usd, usd_eur)
@@ -195,47 +195,47 @@ if not df.empty:
     winners = int((df["P&L $"] > 0).sum())
     losers = int((df["P&L $"] < 0).sum())
 
-    df["Peso %"] = df["Valore $"].map(lambda v: weight_pct(v, total_usd))
+    df["Weight %"] = df["Value $"].map(lambda v: weight_pct(v, total_usd))
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Posizioni", len(df))
-    c2.metric("Valore azioni $", f"${total_usd:,.2f}")
-    c3.metric("Controvalore azioni €", f"€{total_eur:,.2f}" if total_eur is not None else "N/D")
+    c1.metric("Positions", len(df))
+    c2.metric("Equity Value $", f"${total_usd:,.2f}")
+    c3.metric("Equity Value €", f"€{total_eur:,.2f}" if total_eur is not None else "N/D")
     c3.caption(f"USD/EUR {usd_eur:.4f} · {fx_source}" if usd_eur is not None else "USD/EUR N/D")
-    c4.metric("P&L aperto $", f"${total_pnl_usd:,.2f}", delta=f"{total_pnl_usd:+,.2f} $")
-    c5.metric("P&L aperto %", f"{total_pnl_pct:+.2f}%" if total_pnl_pct is not None else "N/D")
-    c6.metric("In profitto / perdita", f"{winners} / {losers}")
+    c4.metric("Open P&L $", f"${total_pnl_usd:,.2f}", delta=f"{total_pnl_usd:+,.2f} $")
+    c5.metric("Open P&L %", f"{total_pnl_pct:+.2f}%" if total_pnl_pct is not None else "N/D")
+    c6.metric("Winners / Losers", f"{winners} / {losers}")
 
     if capital_total_usd is not None or cash_usd is not None or df["Risk to Stop $"].notna().any():
         m1, m2, m3, m4 = st.columns(4)
         invested = invested_pct(total_usd, capital_total_usd)
-        m1.metric("Capitale totale $", f"${capital_total_usd:,.2f}" if capital_total_usd is not None else "N/D")
-        m2.metric("Investito %", f"{invested:.1f}%" if invested is not None else "N/D")
+        m1.metric("Total Capital $", f"${capital_total_usd:,.2f}" if capital_total_usd is not None else "N/D")
+        m2.metric("Invested %", f"{invested:.1f}%" if invested is not None else "N/D")
         m3.metric("Cash $", f"${cash_usd:,.2f}" if cash_usd is not None else "N/D")
         if df["Risk to Stop $"].notna().any():
             heat = float(df["Risk to Stop $"].dropna().sum())
             heat_pct = heat / capital_total_usd * 100.0 if capital_total_usd else None
-            m4.metric("Portfolio Heat", f"${heat:,.2f}", delta=f"{heat_pct:.2f}% capitale" if heat_pct is not None else "stop disponibili")
+            m4.metric("Portfolio Heat", f"${heat:,.2f}", delta=f"{heat_pct:.2f}% of capital" if heat_pct is not None else "stops available")
         else:
             m4.metric("Portfolio Heat", "N/D")
 
     st.caption(
-        f"Market data refresh: {refresh_time} · FX: USD/EUR {usd_eur:.4f} ({fx_source})"
-        if usd_eur is not None else f"Market data refresh: {refresh_time} · FX: N/D"
+        f"Market Data Refresh: {refresh_time} · FX: USD/EUR {usd_eur:.4f} ({fx_source})"
+        if usd_eur is not None else f"Market Data Refresh: {refresh_time} · FX: N/D"
     )
 
-    st.subheader("Posizioni aperte")
+    st.subheader("Open Positions")
     show = df.copy()
     show["Qty"] = pd.to_numeric(show["Qty"], errors="coerce").astype("Int64")
     st.dataframe(_production_style(show), width="stretch", hide_index=True)
 
-    st.subheader("Concentrazione per titolo")
-    concentration = df[["Ticker", "Valore $", "Valore €", "Peso %"]].copy()
-    concentration = concentration.sort_values("Peso %", ascending=False)
+    st.subheader("Position Concentration")
+    concentration = df[["Ticker", "Value $", "Value €", "Weight %"]].copy()
+    concentration = concentration.sort_values("Weight %", ascending=False)
     st.dataframe(_production_style(concentration), width="stretch", hide_index=True)
 
 if fx_positions:
-    st.subheader("Valuta / esposizione USD")
+    st.subheader("FX / USD Exposure")
     fx_rows = []
     for r in fx_positions:
         qty_usd = float(r["quantity_usd"])
@@ -246,15 +246,15 @@ if fx_positions:
         pnl_eur = qty_usd * (rate - avg)
         fx_pnl_pct = pnl_pct(rate, avg)
         fx_rows.append({
-            "Coppia": "USD/EUR",
+            "Pair": "USD/EUR",
             "USD": qty_usd,
-            "PMC USD/EUR": avg,
-            "Cambio USD/EUR": rate,
-            "Fonte": fx_source,
-            "Valore €": value_eur,
+            "Average USD/EUR": avg,
+            "Current USD/EUR": rate,
+            "Source": fx_source,
+            "Value €": value_eur,
             "P&L €": pnl_eur,
             "P&L %": fx_pnl_pct,
-            "Esito": _status_label(pnl_eur),
+            "Status": _status_label(pnl_eur),
             "Target USD/EUR": target,
         })
     fx_df = pd.DataFrame(fx_rows)
@@ -262,24 +262,45 @@ if fx_positions:
     st.dataframe(_production_style(fx_df), width="stretch", hide_index=True)
 
 with st.sidebar:
-    st.header("Guida · Portafoglio Reale")
-    st.markdown(
-        """
-        **Questa pagina mostra capitale reale.**\n\n
-        - 🟢 verde = posizione in guadagno.\n
-        - 🔴 rosso = posizione in perdita.\n
-        - `USD/EUR` indica quanti euro vale 1 dollaro; viene usato per il controvalore in euro.\n
-        - `LIVE` / `LIVE 5M` indica dato recuperato dal mercato; `EOD` ultimo dato giornaliero; `SNAPSHOT` è solo fallback.\n
-        - `Peso %` è la concentrazione della singola posizione sul valore totale delle azioni.\n
-        - `Stop`, `Dist. Stop %` e `Portfolio Heat` vengono calcolati solo se gli stop sono presenti in configurazione: non vengono inventati.\n
-        - `Qty` è la quantità residua effettivamente ancora in portafoglio.\n
-        - Vendite parziali riducono `Qty`; la posizione resta OPEN finché Qty > 0.\n
-        - Laboratory Control / Paper Portfolio / Research sono simulazioni separate e non modificano questa pagina.\n
-        - Target e PMC derivano dalla fotografia/configurazione fornita.
-        """
-    )
+    st.header("Guide · Production Portfolio")
+    with st.expander("What this page shows", expanded=True):
+        st.markdown(
+            """
+            Questa pagina mostra **capitale reale** e resta separata da Laboratory e paper trading.
+
+            - 🟢 `PROFIT` = posizione in guadagno.
+            - 🔴 `LOSS` = posizione in perdita.
+            - `FLAT` = posizione sostanzialmente invariata.
+            - `LIVE` / `LIVE 5M` = dato recuperato dal mercato.
+            - `EOD` = ultimo dato giornaliero.
+            - `SNAPSHOT` = fallback configurato.
+            """
+        )
+    with st.expander("FX & concentration", expanded=False):
+        st.markdown(
+            """
+            - `USD/EUR` indica quanti euro vale 1 dollaro e viene usato per il controvalore in euro.
+            - `Weight %` misura la concentrazione della singola posizione sul valore totale delle azioni.
+            """
+        )
+    with st.expander("Risk fields", expanded=False):
+        st.markdown(
+            """
+            - `Stop`, `Distance to Stop %` e `Portfolio Heat` vengono calcolati solo se gli stop sono presenti in configurazione.
+            - Nessuno stop viene inventato quando il dato manca.
+            - `Qty` è la quantità residua effettivamente ancora in portafoglio.
+            """
+        )
+    with st.expander("Portfolio maintenance", expanded=False):
+        st.markdown(
+            """
+            Vendite parziali riducono `Qty`; la posizione resta `OPEN` finché Qty > 0.
+            Target e Average Price derivano dalla configurazione/fotografia fornita.
+            Laboratory Control, Paper Portfolio e Research non modificano questa pagina.
+            """
+        )
 
 st.info(
-    "Per aggiornare quantità residue, PMC, target, stop o aggiungere/rimuovere posizioni si modifica "
+    "Per aggiornare quantità residue, Average Price, Target, Stop o aggiungere/rimuovere posizioni si modifica "
     "config/production_portfolio.json. `capital_total_usd` e `cash_usd` sono opzionali: se assenti non vengono stimati."
 )
