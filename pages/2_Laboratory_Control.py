@@ -66,6 +66,19 @@ def gate_rows(signal: dict[str, Any]) -> list[dict[str, str]]:
     return out
 
 
+def style_signed(frame: pd.DataFrame, cols: list[str]):
+    styler = frame.style
+    def color(v: Any) -> str:
+        value = n(v)
+        if value is None or value == 0:
+            return ""
+        return "color:#15803d;font-weight:700;" if value > 0 else "color:#dc2626;font-weight:700;"
+    for col in cols:
+        if col in frame.columns:
+            styler = styler.map(color, subset=[col])
+    return styler
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def load_data():
     return {
@@ -78,13 +91,17 @@ st.title("🔬 Laboratory Control")
 st.caption("Technical control room: signal flow, tier conversion, blocking gates and session-to-session changes. PAPER only.")
 
 with st.sidebar:
-    st.markdown("## Laboratory Control Guide")
-    st.markdown(
-        "**Purpose:** explain why the Laboratory is producing its current results.\n\n"
-        "**Tier A:** near-Production paper candidate. **Tier B:** experimental. **Tier C:** research only.\n\n"
-        "**Data Gates:** missing or unreliable data. **Policy Gates:** score, trigger, R/R, Max Buy, earnings and similar rules.\n\n"
-        "**Open P&L Health** is retained only as an engineering sanity check, not as the main performance dashboard."
-    )
+    st.markdown("## Guida · Laboratory Control")
+    with st.expander("A cosa serve", expanded=True):
+        st.markdown("Questa pagina spiega **perché il motore sta producendo certi segnali e certi paper trade**. Non sostituisce la Overview: qui guardiamo soprattutto diagnostica, Tier, conversione e blocchi.")
+    with st.expander("Tier A / B / C"):
+        st.markdown("**Tier A** = candidato quasi Production, ma ancora paper.  \n**Tier B** = esperimento controllato.  \n**Tier C** = ricerca soltanto, mai operativo.")
+    with st.expander("Come leggere i Gates"):
+        st.markdown("**DATA** = problema o mancanza nei dati.  \n**POLICY** = regola non superata, per esempio score, trigger, R/R, Max Buy o earnings.  \nLa tabella **Top Blocking Gates** mostra quali blocchi stanno fermando più spesso i segnali.")
+    with st.expander("Last Session vs Previous"):
+        st.markdown("Confronta l'ultimo run con quello precedente. Serve per capire se aumentano segnali, Tier o rifiuti. Il segno +/− non è sempre buono o cattivo: per esempio meno Data Rejects è positivo.")
+    with st.expander("Open P&L Health"):
+        st.markdown("È solo un **controllo tecnico rapido**. Verde = P&L aperto positivo, rosso = negativo. Il dettaglio economico vero resta in Laboratory Overview / Paper Portfolio.")
 
 try:
     data = load_data()
@@ -101,13 +118,11 @@ cur = [r for r in signals if session_of(r) == latest] if latest else []
 prev = [r for r in signals if session_of(r) == previous] if previous else []
 cur_pos = [p for p in positions if session_of(p) == latest] if latest else []
 open_pos = [p for p in positions if str(p.get("status") or "").upper() in {"OPEN", "TP1_HIT"}]
-closed_pos = [p for p in positions if str(p.get("status") or "").upper() == "CLOSED"]
 cur_tier = Counter(tier_of(r) for r in cur)
 cur_status = Counter(str(r.get("status") or "N/D").upper() for r in cur)
 prev_tier = Counter(tier_of(r) for r in prev)
 prev_status = Counter(str(r.get("status") or "N/D").upper() for r in prev)
 
-# Engineering health only. Uses DB last price because live-price detail belongs to Overview/Paper Portfolio.
 open_pnl_health = 0.0
 for p in open_pos:
     value = open_net_pnl(
@@ -132,7 +147,12 @@ k[3].metric("Tier B", cur_tier.get("B", 0))
 k[4].metric("Tier C", cur_tier.get("C", 0))
 k[5].metric("Data Rejects", cur_status.get("BLOCKED_DATA", 0))
 
-st.caption(f"Engineering health · Open P&L (cost-adjusted, DB prices): ${open_pnl_health:,.2f}")
+if open_pnl_health > 0:
+    st.success(f"Engineering Health · Open P&L: +${open_pnl_health:,.2f}")
+elif open_pnl_health < 0:
+    st.error(f"Engineering Health · Open P&L: -${abs(open_pnl_health):,.2f}")
+else:
+    st.info("Engineering Health · Open P&L: $0.00")
 
 st.subheader("Last Session vs Previous")
 if previous:
@@ -160,15 +180,7 @@ for strategy in strategies:
     closed_pnls = [n(p.get("net_pnl")) for p in closed_s]
     valid = [x for x in closed_pnls if x is not None]
     win_rate = 100.0 * sum(1 for x in valid if x > 0) / len(valid) if valid else None
-    summary.append({
-        "Strategy": strategy,
-        "Signals": len(current_signals),
-        "Paper Trades": len(opened_current),
-        "Conversion %": conversion,
-        "Open": len(open_s),
-        "Closed": len(closed_s),
-        "Win Rate %": win_rate,
-    })
+    summary.append({"Strategy": strategy,"Signals": len(current_signals),"Paper Trades": len(opened_current),"Conversion %": conversion,"Open": len(open_s),"Closed": len(closed_s),"Win Rate %": win_rate})
 if summary:
     sdf = pd.DataFrame(summary)
     st.dataframe(sdf.style.format({"Conversion %": "{:.2f}%", "Win Rate %": "{:.2f}%"}, na_rep="-"), width="stretch", hide_index=True)
@@ -181,19 +193,14 @@ if gates:
     gdf = pd.DataFrame(gates)
     top = gdf.groupby(["Family", "Policy", "Gate"], as_index=False).size().rename(columns={"size": "Count"}).sort_values("Count", ascending=False)
     st.dataframe(top.head(30), width="stretch", hide_index=True)
-    with st.expander("Gate detail by Tier"):
+    with st.expander("Gate Detail by Tier"):
         st.dataframe(gdf, width="stretch", hide_index=True)
 else:
     st.info("No blocking gates were recorded in the latest session.")
 
 st.subheader("Current Signal Mix")
 if cur:
-    mix = pd.DataFrame([{
-        "Strategy": r.get("strategy"),
-        "Ticker": r.get("symbol") or r.get("ticker"),
-        "Tier": tier_of(r),
-        "Status": r.get("status"),
-    } for r in cur])
+    mix = pd.DataFrame([{"Strategy": r.get("strategy"),"Ticker": r.get("symbol") or r.get("ticker"),"Tier": tier_of(r),"Status": r.get("status")} for r in cur])
     st.dataframe(mix, width="stretch", hide_index=True)
 
 st.caption("Question answered by this page: Why is the Laboratory doing this?")
