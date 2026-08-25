@@ -65,3 +65,18 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: python jobs/run_signal_outcomes.py
+
+      - name: Sync fill-based execution and normalized R metrics
+        working-directory: laboratory
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python jobs/sync_paper_execution.py
+
+      - name: Build atomic Laboratory 2.2 dashboard snapshots
+        working-directory: laboratory
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: python jobs/build_strategy_snapshots.py
