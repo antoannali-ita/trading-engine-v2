@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import pandas as pd
@@ -114,6 +114,49 @@ def market_snapshot(tickers: tuple[str, ...]) -> dict[str, dict[str, Any]]:
     return out
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def market_sessions(start_date: str) -> tuple[str, ...]:
+    """NYSE-like trading sessions using SPY as the Laboratory USA market calendar proxy."""
+    try:
+        start = pd.Timestamp(start_date).date() - timedelta(days=7)
+        data = yf.download(
+            "SPY",
+            start=start.isoformat(),
+            end=(datetime.now().date() + timedelta(days=2)).isoformat(),
+            interval="1d",
+            auto_adjust=False,
+            progress=False,
+        )
+        if data is None or data.empty:
+            return ()
+        return tuple(pd.Timestamp(x).date().isoformat() for x in data.index)
+    except Exception:
+        return ()
+
+
+def entry_time_label(value: Any) -> str:
+    if not value:
+        return "N/D"
+    try:
+        return data_access.utc_label(str(value))
+    except Exception:
+        try:
+            ts = pd.Timestamp(value)
+            return ts.strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            return str(value)
+
+
+def trading_days_elapsed(value: Any, sessions: tuple[str, ...]) -> int | None:
+    if not value or not sessions:
+        return None
+    try:
+        entry_date = pd.Timestamp(value).date().isoformat()
+        return sum(1 for session in sessions if entry_date <= session <= sessions[-1])
+    except Exception:
+        return None
+
+
 def _stored_company_name(row: dict[str, Any]) -> str | None:
     candidates = [row, j(row.get("details"))]
     keys = ("company_name", "company", "name", "shortName", "longName", "short_name", "long_name")
@@ -163,21 +206,6 @@ def tier_of(row: dict[str, Any]) -> str:
     return str(d.get("paper_tier") or policy.get("tier") or "N/D")
 
 
-def open_status(current: float | None, stop: float | None, tp1: float | None, tp2: float | None, raw_status: str) -> str:
-    if raw_status == "TP1_HIT":
-        return "TP1 HIT"
-    if current is None:
-        return "OPEN"
-    threshold = NEAR_THRESHOLD_PCT / 100.0
-    if stop is not None and current > stop and (current - stop) / current <= threshold:
-        return f"NEAR STOP · ≤{NEAR_THRESHOLD_PCT:.1f}%"
-    if tp1 is not None and current < tp1 and (tp1 - current) / current <= threshold:
-        return f"NEAR TP1 · ≤{NEAR_THRESHOLD_PCT:.1f}%"
-    if tp2 is not None and current < tp2 and (tp2 - current) / current <= threshold:
-        return f"NEAR TP2 · ≤{NEAR_THRESHOLD_PCT:.1f}%"
-    return "OPEN"
-
-
 def fmt(frame: pd.DataFrame):
     formats: dict[str, str] = {}
     money_cols = {
@@ -217,13 +245,11 @@ st.caption("Executive paper-trading view: current positions, protection levels a
 with st.sidebar:
     st.markdown("## Guida · Laboratory Overview")
     with st.expander("A cosa serve", expanded=True):
-        st.markdown("Questa pagina funziona come una vista portafoglio semplificata: per ogni posizione vedi **prezzo di carico, prezzo attuale, valore di mercato, minimo/massimo del giorno, stop e target**, oltre al P&L.")
+        st.markdown("Questa pagina funziona come una vista portafoglio semplificata: per ogni posizione vedi **prezzo di carico, data/ora di ingresso, giorni di borsa trascorsi, prezzo attuale, valore di mercato, minimo/massimo del giorno, stop e target**, oltre al P&L.")
     with st.expander("Come leggere la tabella principale"):
-        st.markdown("**Entry $** = prezzo di ingresso paper.  \n**Avg Cost $** = prezzo medio di carico; oggi coincide con Entry perché ogni paper position nasce con un solo ingresso.  \n**Current $** = ultimo prezzo disponibile.  \n**Day Low / Day High** = minimo e massimo della seduta disponibili da Yahoo.  \n**Market Value $** = Current × Qty.  \n**SL / TP1 / TP2** = livelli di protezione e obiettivi correnti.")
+        st.markdown("**Entry Time** = data e ora italiana in cui è stata aperta la paper position.  \n**Trading Days** = numero di sedute USA trascorse dall'ingresso, usando SPY come calendario di mercato.  \n**Entry $** = prezzo di ingresso paper.  \n**Avg Cost $** = prezzo medio di carico; oggi coincide con Entry perché ogni paper position nasce con un solo ingresso.  \n**Current $** = ultimo prezzo disponibile.  \n**Day Low / Day High** = minimo e massimo della seduta disponibili da Yahoo.  \n**Market Value $** = Current × Qty.  \n**SL / TP1 / TP2** = livelli di protezione e obiettivi correnti.")
     with st.expander("Come leggere utile/perdita e rischio"):
         st.markdown("**Verde** = valore positivo. **Rosso** = valore negativo.  \n**Open Net P&L** sottrae solo i costi già sostenuti all'ingresso.  \n**Risk to Stop %** indica quanto dista il prezzo dallo stop.  \n**Open Risk $** è la perdita teorica dal prezzo attuale allo stop memorizzato.")
-    with st.expander("Come leggere Status"):
-        st.markdown(f"**NEAR STOP / NEAR TP1 / NEAR TP2** = distanza prezzo **≤ {NEAR_THRESHOLD_PCT:.1f}%** dal relativo livello.  \n**TP1 HIT** = primo target già raggiunto.  \nNon viene mostrato TRAILING finché il motore non implementa davvero una logica trailing.")
     with st.expander("Costi e prezzi"):
         st.markdown(f"Costo corrente USA: **${CURRENT_COMMISSION_PER_SIDE:.2f} per lato** + **{SLIPPAGE_BPS:.0f} bps** di slippage. Scenario futuro: **${DISCOUNT_COMMISSION_PER_SIDE:.2f} per lato**. I prezzi OPEN seguono la gerarchia Yahoo live → DB → Entry fallback.")
 
@@ -241,6 +267,16 @@ open_pos = [p for p in positions if str(p.get("status") or "").upper() in {"OPEN
 closed_pos = [p for p in positions if str(p.get("status") or "").upper() == "CLOSED"]
 open_symbols = tuple(sorted({str(p.get("symbol") or "").upper() for p in open_pos if p.get("symbol")}))
 live = market_snapshot(open_symbols)
+
+entry_values = [p.get("opened_at") or p.get("created_at") for p in open_pos if p.get("opened_at") or p.get("created_at")]
+if entry_values:
+    try:
+        earliest_entry_date = min(pd.Timestamp(v).date() for v in entry_values).isoformat()
+        sessions = market_sessions(earliest_entry_date)
+    except Exception:
+        sessions = ()
+else:
+    sessions = ()
 
 stored_names = {
     str(p.get("symbol") or "").upper(): _stored_company_name(p)
@@ -261,6 +297,7 @@ for p in open_pos:
     entry = n(p.get("entry_price"))
     avg_cost = n(p.get("avg_cost")) or n(p.get("average_cost")) or entry
     qty = n(p.get("qty"))
+    opened_at = p.get("opened_at") or p.get("created_at")
     snap = effective_market(p, live)
     current = n(snap.get("current"))
     day_low = n(snap.get("day_low"))
@@ -289,6 +326,8 @@ for p in open_pos:
         "Company": company_names.get(ticker, "N/D"),
         "Strategy": p.get("strategy"),
         "Tier": tier_of(p),
+        "Entry Time": entry_time_label(opened_at),
+        "Trading Days": trading_days_elapsed(opened_at, sessions),
         "Qty": qty,
         "Entry $": entry,
         "Avg Cost $": avg_cost,
@@ -302,8 +341,6 @@ for p in open_pos:
         "TP1 $": tp1,
         "TP2 $": tp2,
         "Risk to Stop %": risk_pct,
-        "Open Risk $": risk,
-        "Status": open_status(current, stop, tp1, tp2, str(p.get("status") or "").upper()),
         "Source": source,
         "Price P&L $": price_pnl,
         "Entry Cost $": entry_cost(avg_cost, qty),
@@ -344,20 +381,20 @@ if open_df.empty:
     st.info("No open paper positions.")
 else:
     shown = open_df[[
-        "Ticker", "Company", "Strategy", "Tier", "Qty",
+        "Ticker", "Company", "Strategy", "Tier", "Entry Time", "Trading Days", "Qty",
         "Entry $", "Avg Cost $", "Current $", "Day Low $", "Day High $",
         "Market Value $", "Net P&L $", "Net %",
-        "SL $", "TP1 $", "TP2 $", "Risk to Stop %", "Status",
+        "SL $", "TP1 $", "TP2 $", "Risk to Stop %",
     ]]
     st.dataframe(fmt(shown), width="stretch", hide_index=True)
-    st.caption("Fineco-style summary without Bid/Ask/Volume. Day Low/High use the available Yahoo session snapshot; '-' means the daily range could not be verified from the current feed.")
+    st.caption("Trading Days counts verified SPY market sessions from the entry date. Fineco-style summary without Bid/Ask/Volume. Day Low/High use the available Yahoo session snapshot; '-' means the daily range could not be verified from the current feed.")
     with st.expander("Risk & Cost Audit"):
         audit = open_df[[
             "Ticker", "Source", "Capital $", "Open Risk $", "Price P&L $",
             "Entry Cost $", "Est. Exit Cost $", "Net P&L $",
         ]]
         st.dataframe(fmt(audit), width="stretch", hide_index=True)
-        st.caption("Open Net P&L uses only entry costs already incurred. Estimated exit costs are shown separately and are not used for the open status badge.")
+        st.caption("Open Net P&L uses only entry costs already incurred. Estimated exit costs are shown separately and are not used for the open-trade economic result.")
 
 st.subheader("Strategy Snapshot")
 if not open_df.empty:
