@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WRAPPER = ROOT / "dashboard" / "pages" / "1_Portafoglio_Reale.py"
+WRAPPER = ROOT / "dashboard" / "pages" / "1_Production_Portfolio.py"
 
 
 def test_production_portfolio_wrapper_adds_repo_root_to_sys_path():
