@@ -67,15 +67,24 @@ def gross_rr(entry, stop, tp2):
 
 
 def fmt_table(frame: pd.DataFrame):
-    fmt: dict[str, str] = {}
+    formats: dict[str, str] = {}
     for col in frame.columns:
         if col in {"Entry", "Ideal Entry", "Current / Exit", "Notional", "Stop", "TP1", "TP2", "Projected Net P&L 12", "Projected Net P&L 9.90"}:
-            fmt[col] = "{:.2f}"
+            formats[col] = "{:.2f}"
         elif "%" in col:
-            fmt[col] = "{:.2f}%"
+            formats[col] = "{:.2f}%"
         elif pd.api.types.is_float_dtype(frame[col]):
-            fmt[col] = "{:.2f}"
-    return frame.style.format(fmt, na_rep="-")
+            formats[col] = "{:.2f}"
+    styler = frame.style.format(formats, na_rep="-")
+    def color(v: Any) -> str:
+        value = n(v)
+        if value is None or value == 0:
+            return ""
+        return "color:#15803d;font-weight:700;" if value > 0 else "color:#dc2626;font-weight:700;"
+    for col in ["Move %", "Projected Net P&L 12", "Projected Net P&L 9.90"]:
+        if col in frame.columns:
+            styler = styler.map(color, subset=[col])
+    return styler
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -87,13 +96,17 @@ st.title("📒 Paper Portfolio")
 st.caption("Detailed paper-trade ledger. PAPER only; this page does not modify Production or send broker orders.")
 
 with st.sidebar:
-    st.markdown("### Page Guide")
-    st.markdown(
-        f"**Current modeled cost:** ${CURRENT_COMMISSION_PER_SIDE:.2f} per executed side.\n\n"
-        f"**Future discount scenario:** ${DISCOUNT_COMMISSION_PER_SIDE:.2f} per side.\n\n"
-        f"**Research slippage:** {SLIPPAGE_BPS:.0f} bps.\n\n"
-        "Projected P&L assumes a hypothetical exit now and therefore includes both sides. The Live Overview uses only entry costs for open-trade status."
-    )
+    st.markdown("## Guida · Paper Portfolio")
+    with st.expander("A cosa serve", expanded=True):
+        st.markdown("Qui trovi **il dettaglio di ogni paper trade**, aperto o chiuso: entry, prezzo corrente, quantità, stop, target, R/R e P&L stimato. È il registro operativo del Laboratory.")
+    with st.expander("Come leggere i colori"):
+        st.markdown("**Verde** = movimento/P&L positivo.  \n**Rosso** = movimento/P&L negativo.  \nLo stato OPEN/CLOSED indica il ciclo della posizione, non se il trade è buono o cattivo.")
+    with st.expander("Projected Net P&L"):
+        st.markdown("Per una posizione OPEN è una **simulazione di uscita adesso**: include quindi ingresso + uscita stimata. Non va confuso con l'Open Net P&L della Overview, che sottrae solo i costi già sostenuti all'ingresso.")
+    with st.expander("Costi"):
+        st.markdown(f"Scenario corrente: **${CURRENT_COMMISSION_PER_SIDE:.2f} per lato**. Scenario futuro: **${DISCOUNT_COMMISSION_PER_SIDE:.2f} per lato**. Slippage: **{SLIPPAGE_BPS:.0f} bps**.")
+    with st.expander("R/R e livelli"):
+        st.markdown("**Gross R/R TP2** confronta il guadagno potenziale verso TP2 con il rischio fino allo stop. Stop, TP1 e TP2 sono quelli salvati dal motore per quella posizione.")
 
 try:
     positions = load_positions()
