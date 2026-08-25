@@ -14,6 +14,7 @@ st.set_page_config(page_title="Strategy Parameters", page_icon="🧠", layout="w
 
 ACTIVE = [
     {"Strategy":"trend_continuation","Status":"🟢 ACTIVE","Holding Days":20,"Version":"v2.0","Active From":"2026-08","What it looks for":"Structural trend + pullback + momentum + volume + breakout","Score":"Trend 35 · Pullback 25 · Momentum 20 · Volume 10 · Breakout 10","Trigger":"Primary: Price > SMA50 > SMA200","Experiment":"Shadow buffer: 0% vs +0.5% above SMA50"},
+    {"Strategy":"trend_fib_pullback_v1","Status":"🟢 PAPER TEST","Holding Days":60,"Version":"v1.0","Active From":"2026-08-25","What it looks for":"Bullish trend + confirmed impulse + 38.2%-61.8% Fibonacci pullback + bullish reaction + RSI + volume","Score":"Deterministic setup: 100 only when all gates and trigger are confirmed","Trigger":"Current bar > confirmation-bar high after Fib-zone reaction","Experiment":"Research-only Fibonacci confluence pullback; no future-looking pivots; long-only V1"},
     {"Strategy":"cross_sectional_momentum","Status":"🟢 ACTIVE","Holding Days":40,"Version":"v2.0","Active From":"2026-08","What it looks for":"Relative strength versus the same-session universe","Score":"Ret20 percentile 30% · Ret60 35% · Ret120 35%","Trigger":"Price >= 20-day high","Experiment":"True cross-sectional score; not absolute returns"},
     {"Strategy":"short_term_reversal_rsi45","Status":"🟢 A/B TEST","Holding Days":10,"Version":"v2.0-r45","Active From":"2026-08","What it looks for":"Reversal after a moderate downside excess","Score":"RSI 45 · Stretch 30 · Long trend 15 · Stabilization 10","Trigger":"1d return > 0 and RSI14 < 45","Experiment":"Compared separately with RSI35 through A/B/C"},
     {"Strategy":"short_term_reversal_rsi35","Status":"🟢 A/B TEST","Holding Days":10,"Version":"v2.0-r35","Active From":"2026-08","What it looks for":"Reversal after a more extreme downside excess","Score":"RSI 45 · Stretch 30 · Long trend 15 · Stabilization 10","Trigger":"1d return > 0 and RSI14 < 35","Experiment":"RSI score normalized to its own threshold; A/B/C kept separate"},
@@ -34,6 +35,7 @@ TIERS = pd.DataFrame([
 ])
 
 CHANGE_HISTORY = pd.DataFrame([
+    {"Date":"2026-08-25","Strategy":"trend_fib_pullback_v1","Version":"v1.0","Change":"Added to the active Laboratory paper strategy registry: confirmed trend, pivot-safe Fibonacci 38.2%-61.8% pullback, bullish reaction, RSI/volume confirmation and breakout trigger"},
     {"Date":"2026-08","Strategy":"trend_continuation","Version":"v2.0","Change":"Primary 0% SMA50 buffer retained; +0.5% recorded as shadow experiment"},
     {"Date":"2026-08","Strategy":"short_term_reversal","Version":"v2.0-r35 / v2.0-r45","Change":"Split RSI35 and RSI45 into separately tracked variants"},
     {"Date":"2026-08","Strategy":"cross_sectional_momentum","Version":"v2.0","Change":"Operational score changed to same-session cross-sectional percentiles"},
@@ -49,6 +51,8 @@ with st.sidebar:
         st.markdown("Qui vedi **le regole con cui gira il Laboratory**: strategie attive, holding, score, trigger, versioni e test A/B. Non è una pagina di performance.")
     with st.expander("Come leggere Tier A / B / C"):
         st.markdown("**Tier A** = candidato vicino alla Production ma sempre paper.  \n**Tier B** = sperimentale.  \n**Tier C** = solo ricerca, mai operativo.")
+    with st.expander("Strategia Fibonacci"):
+        st.markdown("**trend_fib_pullback_v1** cerca un trend rialzista già confermato e un ritracciamento nella zona Fibonacci **38,2%-61,8%**. Il livello Fibonacci da solo non basta: servono reazione rialzista, RSI, volume e rottura del massimo della barra di conferma. I pivot vengono usati solo dopo la loro conferma, per evitare look-ahead.")
     with st.expander("Versioni e Change History"):
         st.markdown("Ogni modifica importante deve creare una **nuova versione**. In questo modo Research Evolution può confrontare i risultati prima e dopo senza mischiare regole diverse.")
     with st.expander("Costi usati dal Laboratory"):
