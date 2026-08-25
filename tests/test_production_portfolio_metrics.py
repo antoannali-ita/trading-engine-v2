@@ -4,6 +4,9 @@ from common_utility.production_portfolio_metrics import (
     invested_pct,
     pnl_pct,
     risk_to_stop_usd,
+    target_distance_pct,
+    target_gap_usd,
+    target_status,
     usd_to_eur,
     weight_pct,
 )
@@ -18,6 +21,23 @@ def test_target_and_stop_distances_are_directionally_clear():
     assert round(distance_pct(110, 100), 2) == 10.0
     assert round(distance_to_stop_pct(100, 95), 2) == 5.0
     assert round(distance_to_stop_pct(100, 105), 2) == -5.0
+
+
+def test_target_progress_is_negative_below_and_positive_above():
+    assert round(target_distance_pct(100, 110), 2) == -9.09
+    assert round(target_distance_pct(121, 110), 2) == 10.0
+    assert target_gap_usd(100, 110) == -10.0
+    assert target_gap_usd(121, 110) == 11.0
+    assert target_status(100, 110) == "BELOW TARGET"
+    assert target_status(110, 110) == "🎯 TARGET HIT"
+    assert target_status(121, 110) == "🎯 TARGET HIT"
+
+
+def test_target_progress_handles_missing_values():
+    assert target_distance_pct(None, 110) is None
+    assert target_distance_pct(100, 0) is None
+    assert target_gap_usd(None, 110) is None
+    assert target_status(None, 110) == "N/D"
 
 
 def test_portfolio_pnl_and_weights():
