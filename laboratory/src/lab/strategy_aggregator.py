@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-from collections import defaultdict
 from statistics import median
 from typing import Any, Iterable
 
-from lab.blocker_policy import main_blocker, primary_blocker
+from lab.blocker_policy import BLOCKER_LOOKBACK_SESSIONS, main_blocker, primary_blocker
 from lab.risk_metrics import (
     build_risk_basis,
     expectancy_r,
@@ -38,6 +37,11 @@ def _float(value: Any) -> float | None:
         return float(value) if value is not None else None
     except Exception:
         return None
+
+
+def _signal_session(row: dict[str, Any]) -> str | None:
+    value = row.get("signal_date") or row.get("created_at")
+    return str(value)[:10] if value else None
 
 
 def strategy_version(row: dict[str, Any]) -> str:
@@ -104,6 +108,14 @@ def _tier_a_primary_blocker(signal: dict[str, Any]) -> str | None:
     return primary_blocker(failed)
 
 
+def _recent_blocker_signals(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sessions = sorted({s for s in (_signal_session(row) for row in signals) if s})
+    if not sessions:
+        return signals
+    keep = set(sessions[-BLOCKER_LOOKBACK_SESSIONS:])
+    return [row for row in signals if _signal_session(row) in keep]
+
+
 def aggregate_strategy(
     *,
     strategy: str,
@@ -147,8 +159,9 @@ def aggregate_strategy(
         open_count=len(open_rows),
     )
 
+    blocker_sigs = _recent_blocker_signals(sigs)
     rejected_primary = [
-        code for code in (_tier_a_primary_blocker(s) for s in sigs)
+        code for code in (_tier_a_primary_blocker(s) for s in blocker_sigs)
         if code is not None
     ]
     blocker = main_blocker(rejected_primary)
