@@ -156,8 +156,10 @@ for r in equities:
 
     if live_native is not None and quote_currency == "EUR":
         if usd_eur is not None and usd_eur > 0:
-            px = live_native / usd_eur
-            source = "LIVE EUR→USD"
+            # Match the user's production Excel convention exactly:
+            # Price USD = Price EUR / EURUSD = Price EUR * (EUR per USD).
+            px = live_native * usd_eur
+            source = "LIVE EUR ÷ EURUSD"
         else:
             px = snapshot_usd
             source = "SNAPSHOT FX N/D"
@@ -293,7 +295,7 @@ with st.sidebar:
     with st.expander("What this page shows", expanded=True):
         st.markdown(
             "Questa pagina mostra **capitale reale** e resta separata da Laboratory e paper trading. "
-            "`LIVE EUR→USD` indica un titolo quotato in euro convertito in USD con il cambio corrente."
+            "`LIVE EUR ÷ EURUSD` indica un titolo quotato in euro riportato in USD con la stessa convenzione usata nel foglio Production."
         )
     with st.expander("Target tracking", expanded=False):
         st.markdown("`Distance to Target %` e `Target Gap $` misurano la distanza dal target configurato. `TARGET HIT` indica target raggiunto o superato.")
