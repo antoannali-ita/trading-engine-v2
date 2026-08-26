@@ -30,6 +30,27 @@ La V1 accetta un ticker manuale. La Candidate Queue automatica dai segnali BUY/P
 
 La UI mostra l'avanzamento live e rende espliciti WARNING e dati N/D.
 
+## Run Log / Diagnostics
+Ogni avvio del Committee riceve un `run_id` univoco, ad esempio `TC-20260826T213102123456Z-CSCO`.
+
+Stati run:
+- `RUNNING`: esecuzione in corso;
+- `COMPLETE`: verdetto prodotto;
+- `FAILED`: errore reale che impedisce il completamento.
+
+Stati step:
+- `COMPLETE`: step coperto;
+- `WARNING`: step eseguito ma incompleto per fonte/dato mancante; non è un crash;
+- `FAILED`: errore runtime dello step/run.
+
+Il log corrente è visibile direttamente nella pagina. Quando Supabase è configurato e la migration è applicata, ogni run e ogni step vengono anche persistiti senza sovrascrivere i run precedenti.
+
+Tabelle:
+- `trade_committee_runs`: testata, esito, score, confidence, errori e payload finale;
+- `trade_committee_run_steps`: dettaglio step-by-step del run.
+
+La pagina mostra gli ultimi run e permette di aprire il dettaglio degli step. Se Supabase o le tabelle non sono disponibili, il Committee continua a funzionare e dichiara esplicitamente che il log è solo locale/sessione.
+
 ## Reference patterns studiati
 - AI Berkshire: business quality, moat, management, valuation, inversion, thesis tracking.
 - Anthropic Financial Services: earnings, catalysts, equity research, structured review.
@@ -43,24 +64,27 @@ I repository esterni sono reference/possibili fonti di componenti da sottoporre 
 - pagina Streamlit `pages/5_Trade_Committee.py`;
 - wrapper dashboard `dashboard/pages/5_Trade_Committee.py`;
 - orchestratore indipendente `trade_committee/orchestrator.py`;
+- persistenza diagnostica `trade_committee/persistence.py`;
+- migration `supabase/migrations/004_trade_committee_run_log.sql`;
 - market data e indicatori deterministici via dipendenze già presenti (`yfinance`, numpy);
 - score separati per Technical, Quality, Valuation e Volume;
 - verdict APPROVE / WAIT / REJECT;
 - timeline 16 step;
+- storico run persistente e dettaglio step;
 - guardrail RESEARCH ONLY.
 
 ## Limiti V1 dichiarati
-La V1 NON pretende ancora una due diligence completa. SEC/13F/Form 4, news multi-provider, analyst cross-check, moat/management qualitativo, Market Health, portfolio correlation e persistenza Supabase dei run sono esposti come WARNING o roadmap finché i relativi adapter non sono implementati e validati.
+La V1 NON pretende ancora una due diligence completa. SEC/13F/Form 4, news multi-provider, analyst cross-check, moat/management qualitativo, Market Health e portfolio correlation restano WARNING/roadmap finché i relativi adapter non sono implementati e validati.
 
 Nessun dato mancante viene inventato.
 
 ## Evoluzione prevista
-- Candidate Queue alimentata dai segnali `BUY_NOW`, `BUY_LIMIT`, `IN_BUY_ZONE`, `PRE_BUY_HIGH`, `APPROACHING`.
-- Data Source Matrix con primary/secondary/fallback e conflict flag.
-- adapter SEC/company IR/catalyst/news.
-- Bull vs Bear indipendenti e cross-examination.
-- persistenza `committee_runs` e confronto con run precedente.
-- Trade Plan APPROVED monitorabile, senza broker execution nella fase iniziale.
+- Candidate Queue alimentata dai segnali `BUY_NOW`, `BUY_LIMIT`, `IN_BUY_ZONE`, `PRE_BUY_HIGH`, `APPROACHING`;
+- Data Source Matrix con primary/secondary/fallback e conflict flag;
+- adapter SEC/company IR/catalyst/news;
+- Bull vs Bear indipendenti e cross-examination;
+- confronto strutturato con run precedente dello stesso ticker;
+- Trade Plan APPROVED monitorabile, senza broker execution nella fase iniziale;
 - misurazione ex-post dell'effettivo valore aggiunto del Committee.
 
 ## Guardrail permanente
