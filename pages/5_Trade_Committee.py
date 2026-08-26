@@ -4,6 +4,7 @@ from datetime import datetime
 import streamlit as st
 
 from trade_committee import run_committee
+from trade_committee.charting import build_price_chart
 from trade_committee.persistence import (
     fail_run,
     finish_run,
@@ -80,6 +81,17 @@ if r:
     st.subheader("Trade Plan indicativo")
     def f(x): return f"{x:.2f}" if isinstance(x,(int,float)) else "N/D"
     st.dataframe({"Voce":["Entry","Stop","TP1","TP2","ATR14","RSI14","RVOL","Earnings"],"Valore":[f(r['entry']),f(r['stop']),f(r['tp1']),f(r['tp2']),f(r['atr14']),f(r['rsi14']),f(r['relative_volume']),r['earnings']]},hide_index=True,width="stretch")
+
+    st.subheader("📈 Grafico tecnico")
+    try:
+        chart = build_price_chart(r['ticker'], entry=r.get('entry'), stop=r.get('stop'), tp1=r.get('tp1'), tp2=r.get('tp2'))
+        if chart is None:
+            st.warning("Grafico non disponibile: storico prezzo non recuperato.")
+        else:
+            st.plotly_chart(chart, use_container_width=True)
+            st.caption("Candele giornaliere ultimi 6 mesi · SMA20/50/200 · Entry/Stop/TP del Committee.")
+    except Exception as exc:
+        st.warning(f"Grafico non disponibile: {type(exc).__name__}: {exc}")
 
     x,y=st.columns(2)
     with x:
