@@ -1,5 +1,23 @@
 # Storico versioni
 
+## V1.2 LAB-FEAT-001 — 26/08/2026
+
+**Tipo modifica:** Laboratory research-only. Nessuna modifica alla logica Production/CORE.
+
+### Decisione
+
+TradingView Extended Data viene trattato come **Feature Enrichment Layer trasversale**, non come nuova strategia. Il Laboratory può raccogliere valori grezzi sulle strategie esistenti; `PROD-001` resta FROZEN.
+
+### Guardrail
+
+- nessun nuovo trade generato;
+- nessuna modifica a score, Entry, Stop, Max Buy, sizing, trigger o decisione;
+- nessuna soglia RelVol/RS inventata nella fase di raccolta;
+- analisi iniziale post-hoc e una feature alla volta;
+- benchmark RS versionati: USA `SPY`, Italia `FTSEMIB`;
+- provider, timestamp e versione definizione conservati nei record;
+- eventuale promozione: LAB DATA → A/B → EVIDENCE → SHADOW → Production candidate.
+
 ## Documentazione V1.1 ITA — 26/08/2026
 
 **Tipo modifica:** documentale, nessuna modifica alla logica di trading.
@@ -20,40 +38,10 @@ Rendere la baseline utilizzabile come documentazione operativa permanente in ita
 
 ## Documentation Baseline V1.0 — 26/08/2026
 
-### Obiettivo
+Prima memoria funzionale e tecnica permanente di Trading Engine v2: separazione CORE/Laboratory/Production, parity-first, Master Scan/Fast Monitor, decisioni/Entry/RR/sizing, notifiche, freeze governance, ENGINE HEALTH vs STRATEGY EVIDENCE, bug/fix, debito tecnico, AS-IS, TO-BE e ADR.
 
-Creare la prima memoria funzionale e tecnica permanente, a livello repository, di Trading Engine v2.
+## Politica
 
-### Contenuto acquisito nella V1.0
+Ogni cambiamento materiale di codice o configurazione aggiorna la documentazione interessata nello stesso ciclo. `VERSION_HISTORY.md` registra cosa cambia; ADR il perché; `BUG_FIX_REGISTER.md` i difetti; TO-BE/Innovation conserva proposte non ancora Production.
 
-- separazione CORE / Laboratory / Production;
-- migrazione parity-first e ruolo dei reference congelati;
-- responsabilità di Master Scan e Fast Monitor;
-- concetti funzionali di decisione, Entry, R/R e sizing;
-- validazione delle notifiche;
-- collegamento alla Functional Freeze Governance;
-- principio `ENGINE HEALTH` vs `STRATEGY EVIDENCE`;
-- registro iniziale bug/fix;
-- registro iniziale debito tecnico/ottimizzazioni;
-- diagrammi AS-IS;
-- architettura TO-BE e Innovation Backlog separati;
-- framework ADR.
-
-## Politica delle modifiche dalla V1.0
-
-Ogni cambiamento materiale di codice o configurazione deve aggiornare la documentazione interessata nello stesso ciclo di sviluppo.
-
-- `VERSION_HISTORY.md` registra **cosa è cambiato**.
-- Gli ADR registrano **perché è stata presa o modificata una decisione importante**.
-- `BUG_FIX_REGISTER.md` registra **difetti, causa, correzione e protezione di regressione**.
-- I documenti TO-BE/Innovation conservano **idee e proposte** finché non vengono approvate, implementate o respinte.
-
-## Versionamento documentale
-
-- **1.0.x / 1.1.x** — correzioni, traduzioni e chiarimenti documentali senza modifica funzionale del sistema.
-- **1.x** — evoluzioni materiali del sistema documentate senza sostituzione dell'architettura fondamentale.
-- **2.0** — milestone architetturale maggiore. Candidato naturale: CORE realmente modulare e indipendente dopo il completamento della migrazione PARITY.
-
-## Regola
-
-Una nuova versione documentale non deve far apparire come implementato un elemento che esiste soltanto nella roadmap. Lo storico deve permettere di ricostruire lo stato del sistema e le decisioni dell'epoca senza dover recuperare conversazioni esterne al repository.
+Una nuova versione documentale non deve far apparire implementato un elemento che esiste soltanto nella roadmap.
