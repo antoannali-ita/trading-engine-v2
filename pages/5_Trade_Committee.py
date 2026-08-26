@@ -4,6 +4,15 @@ from datetime import datetime
 import streamlit as st
 
 from trade_committee import run_committee
+from trade_committee.persistence import (
+    fail_run,
+    finish_run,
+    log_step,
+    make_run_id,
+    recent_runs,
+    run_steps,
+    start_run,
+)
 
 st.set_page_config(page_title="Trade Committee", page_icon="🔬", layout="wide")
 st.title("🔬 Trade Committee · Deep Pre-Trade Analysis")
@@ -25,24 +34,39 @@ with c2:
     start=st.button("🔬 AVVIA ANALISI", type="primary", use_container_width=True, disabled=not bool(ticker))
 
 if start:
-    progress=st.progress(0, text="Avvio Trade Committee...")
-    status=st.status(f"Analisi {ticker} in corso", expanded=True)
+    run_id = make_run_id(ticker)
+    st.session_state["trade_committee_run_id"] = run_id
+    st.session_state["trade_committee_live_steps"] = []
+    persistence = start_run(run_id, ticker)
+    progress=st.progress(0, text=f"Avvio Trade Committee · {run_id}")
+    status=st.status(f"Analisi {ticker} in corso · {run_id}", expanded=True)
+
     def cb(step,label,state):
         progress.progress(step/16, text=f"{step}/16 · {label}")
         icon="✅" if state=="COMPLETE" else "⚠️"
         status.write(f"{icon} {step:02d} · {label}")
+        st.session_state["trade_committee_live_steps"].append({"step": step, "label": label, "status": state})
+        log_step(run_id, step, label, state)
+
     try:
         result=run_committee(ticker, cb)
-        status.update(label=f"Trade Committee {ticker} completato", state="complete", expanded=False)
+        result["run_id"] = run_id
+        finish_result = finish_run(run_id, result)
+        status.update(label=f"Trade Committee {ticker} completato · {run_id}", state="complete", expanded=False)
         progress.progress(1.0, text="16/16 · Analisi completata")
         st.session_state["trade_committee_result"]=result
+        st.session_state["trade_committee_persistence"]={"start": persistence, "finish": finish_result}
     except Exception as exc:
-        status.update(label=f"Analisi {ticker} non completata", state="error")
-        st.error(f"Errore: {exc}")
+        fail_result = fail_run(run_id, exc)
+        status.update(label=f"Analisi {ticker} FALLITA · {run_id}", state="error")
+        st.session_state["trade_committee_persistence"]={"start": persistence, "fail": fail_result}
+        st.error(f"Errore: {type(exc).__name__}: {exc}")
 
 r=st.session_state.get("trade_committee_result")
 if r:
     st.divider(); st.subheader(f"Final Committee · {r['ticker']}")
+    if r.get("run_id"):
+        st.caption(f"Run ID: `{r['run_id']}`")
     a,b,c,d=st.columns(4)
     verdict=r['verdict']; a.metric("Verdetto", verdict); b.metric("Committee Score", f"{r['committee_score']}/100")
     c.metric("Data Confidence", f"{r['data_confidence']}%")
@@ -79,5 +103,30 @@ if r:
     with st.expander("Dati grezzi / Debug", expanded=False):
         st.json(r['fundamentals'])
     st.warning(r['guardrail'])
+
+st.divider()
+st.subheader("🧾 Run Log / Diagnostics")
+persist_state = st.session_state.get("trade_committee_persistence")
+if persist_state:
+    failures=[f"{k}: {v.get('reason')}" for k,v in persist_state.items() if isinstance(v,dict) and not v.get("ok")]
+    if failures:
+        st.warning("Persistenza DB non completa: " + " | ".join(failures))
+    else:
+        st.success("Log del run salvato su Supabase.")
+
+runs, runs_error = recent_runs(20)
+if runs_error:
+    st.info(f"Storico DB non disponibile: {runs_error}. Il log del run corrente resta comunque visibile in pagina.")
+elif not runs:
+    st.caption("Nessun run persistito ancora.")
+else:
+    st.dataframe(runs, hide_index=True, width="stretch")
+    run_ids=[x.get("run_id") for x in runs if x.get("run_id")]
+    selected=st.selectbox("Dettaglio run", run_ids, index=0)
+    details, details_error = run_steps(selected)
+    if details_error:
+        st.warning(f"Dettaglio non disponibile: {details_error}")
+    else:
+        st.dataframe(details, hide_index=True, width="stretch")
 
 st.caption(f"LAB-RESEARCH-001 · Updated: {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S %Z')}")
