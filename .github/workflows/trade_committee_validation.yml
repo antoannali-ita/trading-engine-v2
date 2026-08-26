@@ -1,0 +1,30 @@
+name: Trade Committee Validation
+
+on:
+  pull_request:
+    paths:
+      - 'trade_committee/**'
+      - 'pages/5_Trade_Committee.py'
+      - 'dashboard/pages/5_Trade_Committee.py'
+      - 'tests/test_trade_committee*.py'
+      - 'supabase/migrations/*trade_committee*.sql'
+      - 'docs/TRADE_COMMITTEE.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Trade Committee tests
+        run: pytest -q tests/test_trade_committee.py tests/test_trade_committee_persistence.py
+      - name: Compile Trade Committee modules
+        run: python -m py_compile trade_committee/*.py pages/5_Trade_Committee.py dashboard/pages/5_Trade_Committee.py
