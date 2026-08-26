@@ -1,30 +1,59 @@
-# Version History
+# Storico versioni
 
-## Documentation Baseline 1.0 — 26/08/2026
+## Documentazione V1.1 ITA — 26/08/2026
 
-Purpose: create the first permanent repository-level functional/technical memory of Trading Engine v2.
+**Tipo modifica:** documentale, nessuna modifica alla logica di trading.
 
-### Captured in V1.0
+### Obiettivo
 
-- CORE / Laboratory / Production separation;
-- parity-first migration and frozen reference role;
-- Master Scan and Fast Monitor responsibilities;
-- decision/entry/RR/sizing functional concepts;
-- notification validation;
-- Functional Freeze governance links;
-- Engine Health vs Strategy Evidence principle;
-- initial bug/fix register;
-- initial technical debt/optimisation register;
-- AS-IS diagrams;
-- explicit TO-BE architecture and innovation backlog;
-- ADR framework.
+Rendere la baseline utilizzabile come documentazione operativa permanente in italiano, mantenendo in lingua originale soltanto identificatori tecnici, nomi dei file, tecnologie e stati del motore.
 
-### Change policy from V1.0 onward
+### Modifiche V1.1
 
-Material code/config changes should update affected documentation in the same development cycle. Version history records what changed; ADR records why important decisions changed; Bug/Fix Register records defects and corrections; TO-BE/Innovation documents retain ideas until promoted or rejected.
+- indice della documentazione tradotto e ampliato;
+- spiegazione in italiano dei domini CORE, Laboratory e Production;
+- descrizione esplicita della differenza AS-IS / TO-BE;
+- ciclo documentale delle modifiche rappresentato con diagramma Mermaid;
+- catalogo componenti tradotto e arricchito con spiegazioni delle responsabilità;
+- mantenimento dei nomi reali di file/funzioni/stati per garantire corrispondenza con il codice;
+- nessuna variazione delle regole decisionali, dei parametri strategici o dei workflow Production.
 
-## Suggested semantic documentation versions
+## Documentation Baseline V1.0 — 26/08/2026
 
-- **1.0.x** — documentation corrections/clarifications with no functional system change.
-- **1.x** — material system enhancement documented without fundamental architecture replacement.
-- **2.0** — major architecture milestone, expected candidate: genuinely independent modular CORE after parity migration.
+### Obiettivo
+
+Creare la prima memoria funzionale e tecnica permanente, a livello repository, di Trading Engine v2.
+
+### Contenuto acquisito nella V1.0
+
+- separazione CORE / Laboratory / Production;
+- migrazione parity-first e ruolo dei reference congelati;
+- responsabilità di Master Scan e Fast Monitor;
+- concetti funzionali di decisione, Entry, R/R e sizing;
+- validazione delle notifiche;
+- collegamento alla Functional Freeze Governance;
+- principio `ENGINE HEALTH` vs `STRATEGY EVIDENCE`;
+- registro iniziale bug/fix;
+- registro iniziale debito tecnico/ottimizzazioni;
+- diagrammi AS-IS;
+- architettura TO-BE e Innovation Backlog separati;
+- framework ADR.
+
+## Politica delle modifiche dalla V1.0
+
+Ogni cambiamento materiale di codice o configurazione deve aggiornare la documentazione interessata nello stesso ciclo di sviluppo.
+
+- `VERSION_HISTORY.md` registra **cosa è cambiato**.
+- Gli ADR registrano **perché è stata presa o modificata una decisione importante**.
+- `BUG_FIX_REGISTER.md` registra **difetti, causa, correzione e protezione di regressione**.
+- I documenti TO-BE/Innovation conservano **idee e proposte** finché non vengono approvate, implementate o respinte.
+
+## Versionamento documentale
+
+- **1.0.x / 1.1.x** — correzioni, traduzioni e chiarimenti documentali senza modifica funzionale del sistema.
+- **1.x** — evoluzioni materiali del sistema documentate senza sostituzione dell'architettura fondamentale.
+- **2.0** — milestone architetturale maggiore. Candidato naturale: CORE realmente modulare e indipendente dopo il completamento della migrazione PARITY.
+
+## Regola
+
+Una nuova versione documentale non deve far apparire come implementato un elemento che esiste soltanto nella roadmap. Lo storico deve permettere di ricostruire lo stato del sistema e le decisioni dell'epoca senza dover recuperare conversazioni esterne al repository.
