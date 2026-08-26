@@ -45,6 +45,29 @@ def load_reference(cfg: Dict[str, Any]):
 def normalize_candidate(reference, market: str, c: Dict[str, Any], cfg: Dict[str, Any] | None = None) -> Dict[str, Any]:
     c=dict(c)
     cfg = cfg or {"market": market, "prebuy_enabled": market.upper() == "USA"}
+
+    # Presentation guardrail for Italy Phase A.
+    # The frozen Italy v1.2 baseline can label a candidate BUY_LIMIT when all
+    # score/RR/sizing gates pass even though the live price is still ABOVE
+    # Max Buy (provided it is within MAX_LIMIT_DISTANCE). That is useful for
+    # ranking but too aggressive as a user-facing action: no order should look
+    # ready while the engine itself says NON INSEGUIRE / trigger WAITING.
+    # Keep the frozen baseline untouched and downgrade only the normalized
+    # operational output to APPROACHING until price <= Max Buy.
+    if (
+        str(market).lower() == "italy"
+        and c.get("decision") == "BUY_LIMIT"
+        and bool(c.get("above_max_buy"))
+    ):
+        dist_pct = c.get("distance_to_max_buy_pct")
+        c["decision"] = "WATCH"
+        c["operational_state"] = "APPROACHING"
+        c["limit_ready"] = False
+        c["veto_reasons"] = [
+            f"NON INSEGUIRE: attendere prezzo <= Max Buy"
+            + (f" ({dist_pct:+.1f}%)" if isinstance(dist_pct, (int, float)) else "")
+        ]
+
     # Phase-A boundary guardrail: do not silently add USA PRE-BUY semantics to Italy.
     c["display_state"] = presentation_state(reference, cfg, c)
     if prebuy_enabled(cfg) and hasattr(reference,"prebuy_engine"):
