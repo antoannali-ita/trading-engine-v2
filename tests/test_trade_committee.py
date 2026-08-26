@@ -33,11 +33,11 @@ def test_page_removes_persistent_run_log_and_adds_chart():
     assert "Copertura reale dell'analisi" in source
 
 
-def test_checks_include_free_sources_and_portfolio_context():
+def test_checks_include_explicit_sources_and_portfolio_context():
     source = CHECKS.read_text(encoding="utf-8")
-    assert "Yahoo Finance" in source
-    assert "SEC EDGAR" in source
-    assert "TradingView Screener" in source
+    assert 'YAHOO_SOURCE = "Yahoo Finance / yfinance"' in source
+    assert 'SEC_SOURCE = "SEC EDGAR"' in source
+    assert 'TRADINGVIEW_SOURCE = "TradingView Screener"' in source
     assert "production_portfolio.json" in source
     assert "FTSEMIB.MI" in source
     assert '"SPY"' in source
