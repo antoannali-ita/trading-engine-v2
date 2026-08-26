@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -15,6 +14,10 @@ from .rigor import cross_validate, verify_market_cap, verify_pe
 
 ROOT = Path(__file__).resolve().parents[1]
 PORTFOLIO_CONFIG = ROOT / "config" / "production_portfolio.json"
+
+YAHOO_SOURCE = "Yahoo Finance / yfinance"
+TRADINGVIEW_SOURCE = "TradingView Screener"
+SEC_SOURCE = "SEC EDGAR"
 
 SECTOR_ETF = {
     "Technology": "XLK",
@@ -117,6 +120,7 @@ def fetch_market_bundle(symbol: str) -> dict[str, Any]:
     return {
         "ticker_obj": t,
         "history": hist,
+        "source": YAHOO_SOURCE,
         "price": price,
         "sma20": sma20,
         "sma50": sma50,
@@ -167,7 +171,7 @@ def fundamental_bundle(info: dict[str, Any], price: float | None) -> dict[str, A
         ),
         "pe_check": verify_pe(price=price, eps=data.get("trailingEps"), reported_pe=data.get("trailingPE")),
     }
-    return {"data": data, "rigor": rigor}
+    return {"source": YAHOO_SOURCE, "data": data, "rigor": rigor}
 
 
 def quality_assessment(f: dict[str, Any]) -> dict[str, Any]:
@@ -248,7 +252,7 @@ def earnings_and_catalysts(t: yf.Ticker) -> dict[str, Any]:
                 })
     except Exception:
         pass
-    return {"next": ep, "history": history, "status": "REAL" if ep["date"] != "N/D" else "PARTIAL"}
+    return {"source": YAHOO_SOURCE, "next": ep, "history": history, "status": "REAL" if ep["date"] != "N/D" else "PARTIAL"}
 
 
 def _news_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -291,7 +295,7 @@ def news_analyst_ownership(t: yf.Ticker, info: dict[str, Any]) -> dict[str, Any]
         pass
     short = {"short_float": _num(info.get("shortPercentOfFloat")), "days_to_cover": _num(info.get("shortRatio")), "institutional_pct": _num(info.get("heldPercentInstitutions"))}
     available = sum(bool(x) for x in [news, any(v is not None for v in analyst.values()), insiders, institutions])
-    return {"news": news, "analyst": analyst, "insiders": insiders, "institutions": institutions, "short": short, "status": "REAL" if available >= 2 else "PARTIAL"}
+    return {"source": YAHOO_SOURCE, "news": news, "analyst": analyst, "insiders": insiders, "institutions": institutions, "short": short, "status": "REAL" if available >= 2 else "PARTIAL"}
 
 
 def _sec_json(url: str) -> Any:
@@ -302,12 +306,12 @@ def _sec_json(url: str) -> Any:
 
 def sec_recent_filings(symbol: str) -> dict[str, Any]:
     if symbol.endswith(".MI"):
-        return {"status": "N/A", "source": "SEC EDGAR", "filings": [], "note": "Emittente non USA"}
+        return {"status": "N/A", "source": SEC_SOURCE, "filings": [], "note": "Emittente non USA"}
     try:
         tickers = _sec_json("https://www.sec.gov/files/company_tickers.json")
         match = next((v for v in tickers.values() if str(v.get("ticker", "")).upper() == symbol.upper()), None)
         if not match:
-            return {"status": "PARTIAL", "source": "SEC EDGAR", "filings": [], "note": "CIK non trovato"}
+            return {"status": "PARTIAL", "source": SEC_SOURCE, "filings": [], "note": "CIK non trovato"}
         cik = str(match["cik_str"]).zfill(10)
         data = _sec_json(f"https://data.sec.gov/submissions/CIK{cik}.json")
         recent = (data.get("filings") or {}).get("recent") or {}
@@ -321,9 +325,9 @@ def sec_recent_filings(symbol: str) -> dict[str, Any]:
                 filings.append({"form": form, "date": filing_date, "accession": accession})
             if len(filings) >= 12:
                 break
-        return {"status": "REAL", "source": "SEC EDGAR", "cik": cik, "filings": filings, "note": "Form 4 = insider filing; 13F non è attribuibile direttamente all'emittente"}
+        return {"status": "REAL", "source": SEC_SOURCE, "cik": cik, "filings": filings, "note": "Form 4 = insider filing; 13F non è attribuibile direttamente all'emittente"}
     except Exception as exc:
-        return {"status": "PARTIAL", "source": "SEC EDGAR", "filings": [], "note": f"SEC non disponibile: {type(exc).__name__}"}
+        return {"status": "PARTIAL", "source": SEC_SOURCE, "filings": [], "note": f"SEC non disponibile: {type(exc).__name__}"}
 
 
 def benchmark_context(symbol: str, info: dict[str, Any], m: dict[str, Any]) -> dict[str, Any]:
@@ -332,7 +336,7 @@ def benchmark_context(symbol: str, info: dict[str, Any], m: dict[str, Any]) -> d
     sector = info.get("sector") or "N/D"
     sector_ticker = None if is_italy else SECTOR_ETF.get(sector)
     tickers = [benchmark] + ([sector_ticker] if sector_ticker else [])
-    result = {"benchmark": benchmark, "sector": sector, "sector_ticker": sector_ticker, "relative": {}, "status": "PARTIAL"}
+    result = {"source": YAHOO_SOURCE, "benchmark": benchmark, "sector": sector, "sector_ticker": sector_ticker, "relative": {}, "status": "PARTIAL"}
     try:
         raw = yf.download(tickers, period="7mo", interval="1d", auto_adjust=True, progress=False, group_by="ticker")
         for ticker in tickers:
@@ -370,13 +374,13 @@ def tradingview_crosscheck(symbol: str, price: float | None, rsi14: float | None
             .get_scanner_data()
         )
         if df is None or df.empty:
-            return {"status": "PARTIAL", "source": "TradingView Screener", "note": "Ticker non trovato"}
+            return {"status": "PARTIAL", "source": TRADINGVIEW_SOURCE, "note": "Ticker non trovato"}
         row = df.iloc[0]
         price_check = cross_validate({"Yahoo": price, "TradingView": _num(row.get("close"))}, tolerance_pct=1.0)
         rsi_check = cross_validate({"Python": rsi14, "TradingView": _num(row.get("RSI"))}, tolerance_pct=5.0)
-        return {"status": "REAL", "source": "TradingView Screener", "price": _num(row.get("close")), "rsi": _num(row.get("RSI")), "price_check": price_check, "rsi_check": rsi_check}
+        return {"status": "REAL", "source": TRADINGVIEW_SOURCE, "price": _num(row.get("close")), "rsi": _num(row.get("RSI")), "price_check": price_check, "rsi_check": rsi_check}
     except Exception as exc:
-        return {"status": "PARTIAL", "source": "TradingView Screener", "note": f"Cross-check non disponibile: {type(exc).__name__}"}
+        return {"status": "PARTIAL", "source": TRADINGVIEW_SOURCE, "note": f"Cross-check non disponibile: {type(exc).__name__}"}
 
 
 def portfolio_context(symbol: str, price: float | None) -> dict[str, Any]:
@@ -398,6 +402,7 @@ def portfolio_context(symbol: str, price: float | None) -> dict[str, Any]:
     weight = current_value / total if total > 0 and current_value else 0.0
     return {
         "status": "REAL",
+        "source": "config/production_portfolio.json",
         "already_owned": current is not None,
         "position": current,
         "estimated_weight": weight,
