@@ -43,6 +43,8 @@ Stati step:
 - `WARNING`: step eseguito ma incompleto per fonte/dato mancante; non è un crash;
 - `FAILED`: errore runtime dello step/run.
 
+Il run è considerato terminato correttamente solo quando esiste il risultato finale, lo step 16 è completato e la testata run passa a `COMPLETE`. Se un'eccezione impedisce il verdetto, il run viene marcato `FAILED` con tipo errore, messaggio e traceback sintetico. I WARNING non rendono il run fallito ma riducono la Data Confidence.
+
 Il log corrente è visibile direttamente nella pagina. Quando Supabase è configurato e la migration è applicata, ogni run e ogni step vengono anche persistiti senza sovrascrivere i run precedenti.
 
 Tabelle:
@@ -50,6 +52,19 @@ Tabelle:
 - `trade_committee_run_steps`: dettaglio step-by-step del run.
 
 La pagina mostra gli ultimi run e permette di aprire il dettaglio degli step. Se Supabase o le tabelle non sono disponibili, il Committee continua a funzionare e dichiara esplicitamente che il log è solo locale/sessione.
+
+## Grafico tecnico
+La pagina include un grafico interattivo Plotly costruito dai dati prezzo recuperati via `yfinance`.
+
+Mostra:
+- candele giornaliere degli ultimi 6 mesi;
+- SMA20, SMA50 e SMA200 quando disponibili;
+- Entry proposta dal Committee;
+- Stop;
+- TP1;
+- TP2.
+
+Il grafico è solo una visualizzazione degli stessi livelli operativi del Committee e non modifica score, verdict o segnali Production. Se il provider prezzo o Plotly non sono disponibili, il Committee continua a funzionare e mostra un WARNING limitato alla sezione grafico.
 
 ## Reference patterns studiati
 - AI Berkshire: business quality, moat, management, valuation, inversion, thesis tracking.
@@ -65,8 +80,10 @@ I repository esterni sono reference/possibili fonti di componenti da sottoporre 
 - wrapper dashboard `dashboard/pages/5_Trade_Committee.py`;
 - orchestratore indipendente `trade_committee/orchestrator.py`;
 - persistenza diagnostica `trade_committee/persistence.py`;
+- grafico tecnico `trade_committee/charting.py`;
 - migration `supabase/migrations/004_trade_committee_run_log.sql`;
 - market data e indicatori deterministici via dipendenze già presenti (`yfinance`, numpy);
+- visualizzazione Plotly interattiva;
 - score separati per Technical, Quality, Valuation e Volume;
 - verdict APPROVE / WAIT / REJECT;
 - timeline 16 step;
