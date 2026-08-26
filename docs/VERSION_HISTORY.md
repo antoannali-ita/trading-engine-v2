@@ -1,5 +1,40 @@
 # Storico versioni
 
+## V1.3 TRADE COMMITTEE V2 — 27/08/2026
+
+**Tipo modifica:** modulo manuale research-only. Nessuna modifica alla logica Production/CORE e nessuna esecuzione broker.
+
+### Correzione principale
+
+La V1 del Trade Committee mostrava 16 step anche quando alcune aree erano soltanto parziali o placeholder. La V2 sostituisce quella rappresentazione con 12 check effettivi, ciascuno con fonte e stato `REAL / PARTIAL / N/A / N/D`.
+
+### Nuove funzioni
+
+- market/technical con Yahoo Finance e calcoli deterministici;
+- cross-check TradingView secondario;
+- financial rigor con controlli Market Cap/P-E e Decimal;
+- fondamentali, qualità finanziaria e valutazione ampliate;
+- earnings window;
+- news, analyst consensus, insider e institutional holders quando disponibili;
+- SEC EDGAR per 10-K/10-Q/8-K/Form 4 USA;
+- relative strength vs SPY / FTSEMIB.MI e sector ETF USA;
+- portfolio context read-only dalla configurazione Production;
+- Bull/Bear/Inversion Review;
+- sizing e R/R netto con commissioni Fineco;
+- Data Confidence legata alla copertura reale;
+- grafico Plotly candlestick + SMA20/50/200 + volume + Entry/Stop/TP1/TP2.
+
+### UI
+
+- rimosse ridondanze;
+- eliminato Run Log / Diagnostics dalla pagina operativa;
+- aggiunta tabella di copertura reale con fonti;
+- dettagli spostati in tab di approfondimento.
+
+### Ricerca open-source
+
+Pattern adattati, dopo audit, da AI Berkshire, Daily Stock Analysis e AI Hedge Fund; documentazione completa in `docs/research/TRADE_COMMITTEE_SOURCE_RESEARCH.md` e `docs/research/TRADE_COMMITTEE_REUSE_MAP.md`.
+
 ## V1.2 LAB-FEAT-001 — 26/08/2026
 
 **Tipo modifica:** Laboratory research-only. Nessuna modifica alla logica Production/CORE.
