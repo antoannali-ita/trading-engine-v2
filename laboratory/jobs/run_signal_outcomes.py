@@ -71,6 +71,32 @@ def _slice_from_signal(prices: pd.DataFrame, signal_date: str) -> pd.DataFrame:
     return x.loc[x.index >= start]
 
 
+def _load_recent_signals(client, cutoff: str, page_size: int = 1000) -> list[dict]:
+    """Load every signal in the outcomes window without a silent row cap.
+
+    PostgREST ranges are inclusive, so each page is [start, start+page_size-1].
+    Filtering by signal_date happens server-side before pagination; this is
+    required for D60 coverage when the Laboratory produces more than 5k rows.
+    """
+    rows: list[dict] = []
+    start = 0
+    while True:
+        response = (
+            client.table("lab_paper_signals")
+            .select("*")
+            .gte("signal_date", cutoff)
+            .order("signal_date", desc=True)
+            .range(start, start + page_size - 1)
+            .execute()
+        )
+        batch = response.data or []
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        start += page_size
+    return rows
+
+
 def _outcome_payload(signal: dict, prices: pd.DataFrame, spy: pd.DataFrame) -> dict | None:
     entry = _num(signal.get("price"))
     if entry is None or entry <= 0:
@@ -162,30 +188,35 @@ def main() -> int:
         return 2
 
     client = get_supabase_client()
-    rows = client.table("lab_paper_signals").select("*").order("signal_date", desc=True).limit(5000).execute().data or []
+    cutoff = (datetime.now(timezone.utc).date() - timedelta(days=120)).isoformat()
+    try:
+        rows = _load_recent_signals(client, cutoff)
+    except Exception as exc:
+        print(f"FATAL: cannot load recent lab_paper_signals: {exc}")
+        return 1
     if not rows:
-        print("no lab_paper_signals to evaluate")
+        print("no recent lab_paper_signals to evaluate")
         return 0
 
-    cutoff = (datetime.now(timezone.utc).date() - timedelta(days=120)).isoformat()
-    rows = [r for r in rows if str(r.get("signal_date", "")) >= cutoff]
     symbols = sorted({str(r.get("symbol", "")).upper() for r in rows if r.get("symbol")})
+    failed = 0
 
     try:
         spy = download_prices(MarketDataRequest(symbol="SPY", start=cutoff))
     except Exception as exc:
         print(f"SPY benchmark download failed: {exc}")
         spy = pd.DataFrame()
+        failed += 1
 
     cache: dict[str, pd.DataFrame] = {}
     written = 0
-    failed = 0
     for symbol in symbols:
         try:
             cache[symbol] = download_prices(MarketDataRequest(symbol=symbol, start=cutoff))
         except Exception as exc:
             print(f"{symbol}: market data failed: {exc}")
             cache[symbol] = pd.DataFrame()
+            failed += 1
 
     for row in rows:
         symbol = str(row.get("symbol", "")).upper()
