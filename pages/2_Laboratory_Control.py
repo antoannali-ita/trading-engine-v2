@@ -181,9 +181,9 @@ st.caption("5-second control room: system health, signal flow, strategy state, a
 with st.sidebar:
     st.markdown("## Guida · Laboratory Control")
     with st.expander("A cosa serve", expanded=True):
-        st.markdown("La Control deve rispondere subito a tre domande: **il Laboratory sta girando? dove si fermano i segnali? quali strategie/titoli richiedono attenzione?**")
+        st.markdown("La Control deve rispondere subito a tre domande: **il Laboratory è sano? dove si fermano i segnali? quali strategie/titoli richiedono attenzione?**")
     with st.expander("Come leggere System Health"):
-        st.markdown("**RUNNING** solo quando la pipeline fino allo snapshot è coerente. Raw Data, Lifecycle e Snapshot hanno freshness separata. Se manca lo snapshot 2.2 viene mostrato un fallback transitorio, chiaramente segnalato.")
+        st.markdown("**HEALTHY** significa che l'ultimo run completato e la pipeline fino allo snapshot sono coerenti; non significa che un job sia in esecuzione in questo momento. Raw Data, Lifecycle e Snapshot hanno freshness separata. Se manca lo snapshot 2.2 viene mostrato un fallback transitorio, chiaramente segnalato.")
     with st.expander("Come leggere Strategy Health"):
         st.markdown("**WORKING / EARLY / WATCH / WEAK / DATA ISSUE** arrivano dal backend e sono versionati. **EARLY** significa campione insufficiente: un PF alto non basta.")
     with st.expander("Tier e Blockers"):
@@ -210,13 +210,15 @@ run_status = str(control.get("run_status") or "N/D").upper()
 raw_fresh = str(control.get("raw_freshness_status") or "N/D").upper()
 life_fresh = str(control.get("lifecycle_freshness_status") or "N/D").upper()
 snap_fresh = str(control.get("snapshot_freshness_status") or "N/D").upper()
+last_completed = data_access.utc_label(run.get("completed_at")) if run and run.get("completed_at") else "N/D"
 
 health_ok = using_snapshot and run_status == "OK" and raw_fresh == "FRESH" and life_fresh in {"FRESH", "N/D"} and snap_fresh == "FRESH"
-health_text = f"{'🟢 LAB RUNNING' if health_ok else '🟠 LAB ATTENTION'} · Session {session} · Raw {raw_fresh} · Lifecycle {life_fresh} · Snapshot {snap_fresh}"
+health_text = f"{'🟢 LAB HEALTHY' if health_ok else '🟠 LAB ATTENTION'} · Last Completed Run {last_completed} · Session {session} · Raw {raw_fresh} · Lifecycle {life_fresh} · Snapshot {snap_fresh}"
 if health_ok:
     st.success(health_text)
 else:
     st.warning(health_text)
+st.caption("Daily Laboratory session is expected after the US market close; HEALTHY describes the latest completed pipeline, not a job currently executing.")
 
 st.subheader("Run Snapshot")
 k = st.columns(6)
