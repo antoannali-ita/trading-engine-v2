@@ -27,9 +27,7 @@ with c2:
 if start:
     progress=st.progress(0, text="Avvio Trade Committee...")
     status=st.status(f"Analisi {ticker} in corso", expanded=True)
-    labels={}
     def cb(step,label,state):
-        labels[step]=(label,state)
         progress.progress(step/16, text=f"{step}/16 · {label}")
         icon="✅" if state=="COMPLETE" else "⚠️"
         status.write(f"{icon} {step:02d} · {label}")
@@ -52,10 +50,12 @@ if r:
     if verdict=="APPROVE": st.success("🟢 APPROVE · candidato idoneo alla valutazione operativa manuale")
     elif verdict=="WAIT": st.warning("🟡 WAIT · condizioni non ancora sufficienti per confermare l'acquisto")
     else: st.error("🔴 REJECT · il Committee non conferma l'acquisto")
+    if r.get("warning_count"):
+        st.info(f"ℹ️ {r['warning_count']} step sono WARNING: analisi eseguita, ma fonte/dato dedicato non ancora disponibile. Non sono errori runtime e riducono la Data Confidence.")
 
     st.subheader("Trade Plan indicativo")
     def f(x): return f"{x:.2f}" if isinstance(x,(int,float)) else "N/D"
-    st.dataframe({"Voce":["Entry","Stop","TP1","TP2","ATR14","RSI14","RVOL"],"Valore":[f(r['entry']),f(r['stop']),f(r['tp1']),f(r['tp2']),f(r['atr14']),f(r['rsi14']),f(r['relative_volume'])]},hide_index=True,width="stretch")
+    st.dataframe({"Voce":["Entry","Stop","TP1","TP2","ATR14","RSI14","RVOL","Earnings"],"Valore":[f(r['entry']),f(r['stop']),f(r['tp1']),f(r['tp2']),f(r['atr14']),f(r['rsi14']),f(r['relative_volume']),r['earnings']]},hide_index=True,width="stretch")
 
     x,y=st.columns(2)
     with x:
@@ -68,8 +68,15 @@ if r:
     st.subheader("Trend e qualità")
     st.dataframe({"Check":["Technical","Business/Quality","Valuation","Volume","SMA20","SMA50","SMA200","Earnings"],"Valore":[f"{r['technical_score']}/100",f"{r['quality_score']}/100",f"{r['valuation_score']}/100",f"{r['volume_score']}/100",f(r['sma20']),f(r['sma50']),f(r['sma200']),r['earnings']]},hide_index=True,width="stretch")
 
+    st.subheader("Fondamentali disponibili")
+    labels={"marketCap":"Market Cap","trailingPE":"P/E","forwardPE":"Forward P/E","pegRatio":"PEG","returnOnEquity":"ROE","debtToEquity":"Debt/Equity","freeCashflow":"Free Cash Flow","operatingCashflow":"Operating Cash Flow","revenueGrowth":"Revenue Growth","earningsGrowth":"Earnings Growth","profitMargins":"Profit Margin"}
+    rows=[{"Metrica":labels.get(k,k),"Valore":v if v is not None else "N/D"} for k,v in r['fundamentals'].items()]
+    st.dataframe(rows,hide_index=True,width="stretch")
+
     with st.expander("Timeline e Data Quality", expanded=False):
+        st.caption("COMPLETE = step coperto. WARNING = step eseguito ma incompleto per fonte/dato mancante. WARNING non significa errore del programma.")
         st.dataframe(r['steps'],hide_index=True,width="stretch")
+    with st.expander("Dati grezzi / Debug", expanded=False):
         st.json(r['fundamentals'])
     st.warning(r['guardrail'])
 
