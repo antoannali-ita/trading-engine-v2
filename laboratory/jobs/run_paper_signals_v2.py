@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -163,10 +163,29 @@ def main() -> int:
     failures = 0
 
     try:
+        stale_before = (now - timedelta(days=3)).isoformat()
+        client.table("lab_watchlist").update({"active": False}).lt("last_seen_at", stale_before).eq("active", True).execute()
+    except Exception as exc:
+        print(f"lab_watchlist stale cleanup warning: {exc}")
+
+    try:
         open_positions = client.table("lab_paper_positions").select("*").in_("status", ["OPEN", "TP1_HIT"]).execute().data or []
     except Exception as exc:
         print(f"FATAL: cannot read active paper positions: {exc}")
         return 1
+
+    for lifecycle_symbol in base._extra_lifecycle_symbols(configured_symbols, open_positions):
+        try:
+            lifecycle_prices = download_prices(MarketDataRequest(symbol=lifecycle_symbol, start="2024-01-01"))
+            lifecycle_frame = enrich_prices(lifecycle_prices)
+            if lifecycle_frame.empty:
+                raise RuntimeError("no enriched prices for open-position lifecycle")
+            lifecycle_last = lifecycle_frame.iloc[-1]
+            lifecycle_date = lifecycle_frame.index[-1].date().isoformat()
+            lifecycle_updates += base._update_existing_positions(client, lifecycle_symbol, lifecycle_last, lifecycle_date)
+        except Exception as exc:
+            failures += 1
+            print(f"lifecycle {lifecycle_symbol}: {exc}")
 
     try:
         spy_prices = download_prices(MarketDataRequest(symbol="SPY", start="2024-01-01"))
