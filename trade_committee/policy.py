@@ -81,7 +81,7 @@ def evaluate_verdict(
     elif committee_score >= MIN_APPROVE_SCORE and confidence >= MIN_APPROVE_CONFIDENCE:
         verdict = "APPROVE" if not (core or soft) else "APPROVE_WITH_WARNING"
         reason = "La trade supera i controlli core senza hard veto"
-    elif committee_score >= MIN_WAIT_SCORE or core or soft:
+    elif committee_score >= MIN_WAIT_SCORE:
         verdict = "WAIT_DATA" if core else "WAIT_CORE"
         reason = "La trade non è bocciata, ma servono dati o condizioni migliori"
     else:
