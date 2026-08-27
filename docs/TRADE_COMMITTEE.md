@@ -5,100 +5,175 @@ Modulo manuale, autonomo e read-only verso Production per una due diligence aggi
 
 Non è una strategia, non sostituisce CORE/Multi-Horizon, non genera ordini e non modifica score, eligibility, entry o segnali Production.
 
-Flusso:
+## Principio architetturale
 
-`Candidato -> selezione manuale -> Trade Committee -> APPROVE / WAIT / REJECT -> decisione umana`
+**Il Trade Committee non produce un secondo Stock Score. Valida l'affidabilità e la validità operativa della trade proposta dal CORE.**
 
-## Principio V2
-La V1 mostrava 16 step ma alcuni erano soltanto parziali o placeholder. La V2 applica una regola più rigorosa:
+Le tre grandezze restano separate:
 
-`CHECK -> FONTE -> DATO -> CALCOLO -> ESITO -> CONFIDENCE`
+`ENGINE SCORE != TRADE VALIDATION SCORE != CORE DATA CONFIDENCE`
 
-Ogni check viene classificato `REAL`, `PARTIAL`, `N/A` oppure `N/D`. La pagina non dichiara più completato un controllo che non è stato realmente eseguito.
+Quando è disponibile uno snapshot CORE, entry, Max Buy, stop, TP1, TP2, R/R, trigger e stato operativo sono authoritative e non vengono ricalcolati dal Committee. Il Committee usa dati esterni/locali solo come cross-check, enrichment e ricerca di invalidazioni.
 
-## Pipeline V2
-1. **Market & Technical** — Yahoo Finance + calcoli Python: OHLCV, SMA20/50/200, RSI14, MACD, ATR14, RVOL, supporti/resistenze.
-2. **Data Quality / Cross-check** — TradingView Screener come seconda fonte quando disponibile + controlli aritmetici Decimal su Market Cap e P/E.
-3. **Fundamental Deep Dive** — Yahoo Finance: market cap, P/E, forward P/E, PEG, EV/EBITDA, ROE/ROA, liquidità, debito, cash flow, growth, margini, short/ownership.
-4. **Business Quality / Financial Strength** — check deterministici su ROE, Current Ratio, D/E, OCF, FCF, crescita e margini. Moat e management qualitativi non vengono inventati.
-5. **Valuation** — P/E, forward P/E, PEG, EV/EBITDA e FCF yield con controlli aritmetici.
-6. **Earnings / Catalyst Window** — data earnings e storia recente quando disponibile; earnings ravvicinati entrano nei gate.
-7. **News / Analyst / Insider / Ownership** — Yahoo Finance: news, analyst consensus/target, insider transactions, institutional holders, short float e days-to-cover quando disponibili.
-8. **Official Filings** — SEC EDGAR per emittenti USA: 10-K, 10-Q, 8-K e Form 4 recenti. Il 13F non viene falsamente attribuito al singolo emittente.
-9. **Market / Sector / Relative Strength** — SPY per USA, FTSE MIB per Italia; ETF settoriale USA quando disponibile; RS 1m/3m/6m.
-10. **Portfolio Context** — lettura read-only di `config/production_portfolio.json`: posizione già presente e peso stimato sullo snapshot.
-11. **Entry / Stop / Target / Sizing** — struttura 20 giorni + ATR, resistenze 60/120 giorni, capitale 2.500 USD e commissione Fineco 18 USD per lato.
-12. **Bull / Bear / Inversion Review** — sintesi avversariale dei risultati reali precedenti e identificazione delle condizioni che invalidano l'acquisto.
+Senza snapshot CORE il modulo resta utilizzabile come manual research, ma non deve simulare un secondo CORE né produrre un APPROVE operativo.
 
-## Fonti V2
-| Dominio | Fonte primaria | Secondaria | Nota |
-|---|---|---|---|
-| Prezzi/volumi | Yahoo Finance / yfinance | TradingView Screener | nessuna SLA gratuita |
-| Tecnica | calcolo Python su OHLCV | TradingView | deterministico |
-| Fundamentals | Yahoo Finance | controlli aritmetici | SEC resta fonte regolatoria per filings |
-| Filings USA | SEC EDGAR | Company IR futura | 10-K/10-Q/8-K/Form 4 |
-| Earnings | Yahoo Finance | IR futura | evento usato come gate |
-| News/analisti | Yahoo Finance | provider web futuro | copertura dipende dal ticker |
-| Insider/istituzionali | Yahoo Finance + SEC Form 4 | 13F dedicato futuro | 13F resta separato |
-| Market/RS | SPY / FTSEMIB.MI + sector ETF | — | benchmark coerente col mercato |
-| Portfolio | config Production interna | — | read-only |
+## BUGFIX-TC-001 · 27/08/2026
 
-## Grafico
-La pagina include un grafico Plotly interattivo con:
-- candele ultimi 6 mesi;
-- SMA20/50/200;
-- volume;
-- Entry;
-- Stop;
-- TP1;
-- TP2.
+### Root cause
+La V1 richiedeva contemporaneamente:
 
-Il grafico è solo visualizzazione e non modifica il verdetto.
+`committee_score >= 75 AND technical >= 65 AND warning_count <= 1`
 
-## UI
-La vista principale è volutamente compatta:
-- verdict;
-- Committee Score;
-- Data Confidence;
-- prezzo;
-- copertura reale;
-- grafico;
-- piano operativo;
-- motivi pro/contro.
+ma generava strutturalmente più WARNING per adapter non ancora implementati. APPROVE risultava quindi irraggiungibile per costruzione.
 
-Gli approfondimenti sono organizzati in tab: Fondamentali, Catalizzatori & ownership, SEC/Mercato, Portafoglio & Data Quality.
+### Correzione
+- eliminato il gate sul conteggio grezzo dei WARNING;
+- introdotta una tassonomia esplicita di check;
+- introdotta una lista chiusa di HARD VETO;
+- gli enrichment mancanti non bloccano APPROVE e non riducono la Core Data Confidence;
+- introdotto lo snapshot CORE con hash/versione;
+- Trade Validation Score sostituisce il concetto di secondo stock score del Committee;
+- aggiunti test di raggiungibilità APPROVE e test simmetrici sugli hard veto;
+- aggiunta fixture storica CRUS per regressione del bug;
+- RSI cross-check normalizzato a Wilder;
+- RVOL intraday marcato come parziale e non penalizzato come full-session.
 
-Il precedente **Run Log / Diagnostics persistente è stato rimosso dalla pagina e dal flusso operativo** perché ridondante per l'uso manuale. La vecchia migration Supabase resta nel repository come storico di migrazione e non viene più richiamata dalla UI V2.
+## Tassonomia check
 
-## Scoring e gate
-`ENGINE SCORE != COMMITTEE SCORE != DATA CONFIDENCE`.
+| Classe | Significato | Effetto |
+|---|---|---|
+| `COMPLETE` | check core eseguito correttamente | nessuna penalità |
+| `HARD_VETO` | condizione esplicitamente bloccante | impedisce APPROVE |
+| `CORE_WARNING` | dato core importante incompleto | riduce Core Data Confidence, porta tipicamente a WAIT_DATA |
+| `SOFT_WARNING` | informazione utile ma non decisiva | piccola penalità di confidence |
+| `ENRICHMENT_ND` | 13F/insider/analyst/news o enrichment non disponibile | non blocca e non riduce Core Data Confidence |
+| `FAILED` | errore reale del check | forte penalità / review |
 
-Il Committee Score combina tecnica, volumi, qualità finanziaria, valutazione, market context, sentiment e portfolio fit. La Data Confidence dipende dalla copertura reale delle fonti.
+### Regola strutturale
+**Tutto ciò che non appartiene all'enum HARD VETO non può bloccare automaticamente APPROVE.**
 
-Gate V2 principali:
-- `Prezzo < SMA50 < SMA200` -> niente APPROVE;
-- earnings entro 7 giorni -> niente APPROVE;
-- Data Confidence <70% -> niente APPROVE;
-- R/R netto TP1 <1.5 -> niente APPROVE.
+L'estensione dell'enum HARD VETO richiede nella stessa PR:
+1. modifica dell'enum;
+2. test dedicato;
+3. documentazione del motivo.
 
-Un APPROVE non equivale a un ordine reale.
+## Hard veto ufficiali
+- `PRICE_DATA_CONFLICT`
+- `CORPORATE_ACTION`
+- `EARNINGS_LT_7D`
+- `TRIGGER_INVALID`
+- `PRICE_ABOVE_MAX_BUY`
+- `RR_NET_LT_MIN`
+- `LIQUIDITY`
+- `POSITION_SIZE`
+- `CRITICAL_DATA_STALE`
+- `CORE_HARD_VETO`
 
-## Pattern open-source adottati
-La V2 incorpora/adatta principi verificati dai progetti studiati nei video:
-- **AI Berkshire (MIT)**: financial rigor, data confidence, inversion/red flags, decisione non evasiva;
-- **Daily Stock Analysis**: provider abstraction, output operativo, progress del task;
-- **AI Hedge Fund (MIT)**: separazione Bull/Bear/Risk come pattern, non motore di execution;
-- **Anthropic Financial Services**: architettura a skill/adapter/provider, senza dipendere dai connector enterprise a pagamento.
+Il Committee può aggiungere un veto ulteriore, ma non può cancellare un veto già presente nel CORE.
 
-Non è stato copiato integralmente nessun framework esterno. I componenti sono stati riscritti/adattati dietro interfacce del progetto. La ricerca completa è in `docs/research/TRADE_COMMITTEE_SOURCE_RESEARCH.md`.
+## Snapshot CORE
+Lo snapshot è immutabile e hashato. Campi principali:
+- ticker / mercato / versione engine;
+- Engine/Opportunity Score;
+- stato tecnico e RS;
+- entry ideale / Buy Zone / Max Buy;
+- stop / TP1 / TP2;
+- R/R netto;
+- trigger e motivo;
+- size/capitale/rischio;
+- data quality e anomalie;
+- corporate action;
+- earnings date/days;
+- decisione/stato operativo;
+- gate falliti e veto CORE.
 
-## Limiti ancora aperti
-- moat e management qualitativi richiedono una research layer con fonti esplicite;
-- 13F per superinvestitori richiede un adapter dedicato e non può essere dedotto dai soli institutional holders;
-- Company IR e transcript earnings non sono ancora adapter primari;
-- news cross-provider non è ancora implementato;
-- sector concentration del portfolio è ancora parziale;
-- Candidate Queue automatica dai segnali Engine resta una successiva integrazione read-only.
+Il campo `core_snapshot_hash` permette di dimostrare quale identico input CORE ha prodotto un determinato verdetto del Committee.
+
+## Trade Thesis Validation
+I 20 punti di validazione della tesi CORE sono deterministici:
+- trigger CORE ancora valido: 6;
+- prezzo non oltre Max Buy: 4;
+- stop coerente sotto entry: 4;
+- R/R netto TP2 >= minimo: 4;
+- nessuna rottura di struttura/trigger dichiarata dal CORE: 2.
+
+Non esiste una voce soggettiva tipo "price action deteriorata" assegnata a giudizio libero.
+
+## Data Confidence
+Modello iniziale versionato: `PATCH_1_PROVISIONAL_WEIGHTS_V1`.
+
+Pesi provvisori:
+- CORE_WARNING: -12;
+- SOFT_WARNING: -4;
+- ENRICHMENT_ND: 0.
+
+Sono valori provvisori da calibrare solo dopo una raccolta sufficiente di run reali. Qualunque modifica futura richiede versione nuova del modello, non aggiustamenti silenziosi.
+
+La UI/output espone separatamente:
+- `Core Data Confidence`;
+- `Enrichment Coverage`.
+
+Mancanza di 13F o insider non deve far sembrare inaffidabile un prezzo o un earnings core verificato.
+
+## Pipeline corrente
+1. Market data corrente come cross-check.
+2. Data Quality / TradingView cross-check.
+3. Fundamental Deep Dive.
+4. Business Quality / Financial Strength.
+5. Valuation.
+6. Earnings / Catalyst Window.
+7. News / Analyst / Insider / Ownership (enrichment).
+8. Official Filings SEC.
+9. Market / Sector / Relative Strength.
+10. Portfolio Context.
+11. CORE Trade Plan, authoritative quando snapshot presente.
+12. Trade Thesis Validation.
+
+## Tecnica: RSI e RVOL
+- RSI14 di cross-check usa Wilder/RMA, coerente con la semantica standard di TradingView.
+- Durante la sessione cash USA, il volume giornaliero corrente è parziale. Il raw RVOL viene conservato come `relative_volume_partial`, ma non viene penalizzato come se fosse un dato full-day.
+- A sessione chiusa viene usato `relative_volume` full-session.
+
+Questi dati restano cross-check. Se lo snapshot CORE è presente, non sostituiscono i valori authoritative del motore.
+
+## Trade Plan e Fineco
+Quando lo snapshot CORE è presente, il Committee usa direttamente il piano CORE.
+
+Il piano locale di fallback è solo diagnostico e usa:
+- capitale massimo posizione: 2.500 USD;
+- commissione Fineco USA: 12 USD per lato;
+- nessun ordine automatico.
+
+## Stati finali
+Gli stati usati dal policy layer sono:
+- `APPROVE`
+- `APPROVE_WITH_WARNING`
+- `WAIT_CORE`
+- `WAIT_DATA`
+- `REJECT_HARD_VETO`
+- `REJECT_COMMITTEE`
+
+Le nomenclature devono restare condivise tra policy, UI, persistence, test e documentazione. Nuovi sinonimi non vanno introdotti localmente.
+
+## Test di regressione obbligatori
+- candidato perfetto può raggiungere APPROVE;
+- enrichment mancante non blocca APPROVE;
+- hard veto blocca sempre APPROVE;
+- più CORE_WARNING senza hard veto portano almeno a WAIT, non a reject automatico per accumulo;
+- RVOL intraday non viene penalizzato come full-session;
+- RSI Wilder resta bounded/coerente;
+- snapshot CORE è hashabile e immutabile;
+- fixture storica CRUS documenta la classe di regressione che ha originato BUGFIX-TC-001.
+
+## Evoluzione successiva
+Dopo il bugfix strutturale:
+1. collegare stabilmente Candidate Queue/CORE snapshot al flusso UI;
+2. completare adapter Company IR, transcript, 13F e Form4 avanzato;
+3. raccogliere almeno 30-50 run reali;
+4. misurare falsi reject/falsi approve;
+5. solo allora calibrare soglie e pesi del Validation Score/Data Confidence.
+
+Non si calibrano soglie su una pipeline logicamente distorta.
 
 ## Guardrail permanente
-`RESEARCH ONLY · nessun ordine reale · nessuna modifica al CORE Production`.
+`RESEARCH ONLY · nessun ordine reale · il Committee valida il CORE e non lo sostituisce`.
