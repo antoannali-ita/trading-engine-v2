@@ -32,6 +32,26 @@ def _extract_text(msg) -> str:
     return payload.decode(charset, errors="replace")
 
 
+def _select_all_mail(mail: imaplib.IMAP4_SSL) -> str:
+    """Seleziona Tutti i messaggi, così intercettiamo anche alert filtrati fuori da INBOX."""
+    status, boxes = mail.list()
+    if status == "OK":
+        for raw in boxes or []:
+            line = raw.decode("utf-8", errors="replace")
+            if "\\All" in line:
+                # Il nome mailbox è normalmente l'ultimo token; può contenere spazi ed essere quotato.
+                mailbox = line.split('"/"')[-1].strip() if '"/"' in line else line.split()[-1]
+                status, _ = mail.select(mailbox)
+                if status == "OK":
+                    return mailbox
+    # Fallback per Gmail in lingua inglese.
+    for mailbox in ('"[Gmail]/All Mail"', '"[Google Mail]/All Mail"'):
+        status, _ = mail.select(mailbox)
+        if status == "OK":
+            return mailbox
+    raise RuntimeError("Impossibile selezionare la cartella Gmail Tutti i messaggi / All Mail")
+
+
 def process_unread_alerts() -> int:
     gmail_user = os.environ["GMAIL_SENDER"]
     gmail_password = os.environ["GMAIL_PASSWORD"]
@@ -40,12 +60,16 @@ def process_unread_alerts() -> int:
     mail = imaplib.IMAP4_SSL(IMAP_HOST)
     try:
         mail.login(gmail_user, gmail_password)
-        mail.select("INBOX")
+        mailbox = _select_all_mail(mail)
+        print(f"Mailbox selezionata: {mailbox}")
         status, data = mail.search(None, "UNSEEN", "FROM", f'"{FINECO_SENDER}"')
         if status != "OK":
             raise RuntimeError("Ricerca IMAP non riuscita")
 
-        for msg_id in data[0].split():
+        msg_ids = data[0].split()
+        print(f"Alert Fineco non letti trovati: {len(msg_ids)}")
+
+        for msg_id in msg_ids:
             status, raw_data = mail.fetch(msg_id, "(RFC822)")
             if status != "OK":
                 continue
@@ -53,6 +77,7 @@ def process_unread_alerts() -> int:
             msg = email.message_from_bytes(raw_email)
             subject = _decode_subject(msg)
             if FINECO_SUBJECT.lower() not in subject.lower():
+                print(f"SKIP {msg_id.decode()}: oggetto non Fineco ({subject})")
                 continue
 
             text = _extract_text(msg)
