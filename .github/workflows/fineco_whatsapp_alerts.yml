@@ -3,7 +3,10 @@ name: Fineco WhatsApp Alerts
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/5 * * * *"
+    # GitHub cron usa UTC. La finestra 06:00-22:50 UTC copre 08:00-23:00
+    # in ora legale italiana e resta sufficientemente ampia in ora solare.
+    # Il controllo Europe/Rome sotto evita elaborazioni fuori fascia.
+    - cron: "*/10 6-22 * * 1-5"
 
 permissions:
   contents: read
@@ -13,15 +16,32 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
+      - name: Check Italian market alert window
+        id: window
+        shell: bash
+        run: |
+          HOUR=$(TZ=Europe/Rome date +%H)
+          DAY=$(TZ=Europe/Rome date +%u)
+          if [ "$DAY" -ge 1 ] && [ "$DAY" -le 5 ] && [ "$HOUR" -ge 8 ] && [ "$HOUR" -lt 23 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Dentro fascia Italia: $(TZ=Europe/Rome date)"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Fuori fascia Italia: $(TZ=Europe/Rome date)"
+          fi
+
       - name: Checkout
+        if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Read Fineco alerts and send WhatsApp
+        if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
         env:
           GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
@@ -29,4 +49,5 @@ jobs:
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
           FINECO_SENDER: service@finecobank.com
           FINECO_SUBJECT: Alert da FinecoBank
+          FINECO_LABEL: BANCHE
         run: python -m fineco_alert_bridge.runner
