@@ -15,6 +15,9 @@ class FinecoAlert:
 class TradingViewData:
     prezzo_attuale: str | None = None
     segnale: str | None = None
+    segnale_1h: str | None = None
+    segnale_4h: str | None = None
+    segnale_1d: str | None = None
     range_min: str | None = None
     range_max: str | None = None
     entry_ideale: str | None = None
@@ -52,7 +55,6 @@ def _v(value: str | None) -> str:
 
 
 def format_whatsapp(alert: FinecoAlert, tv: TradingViewData | None = None) -> str:
-    """Formatta l'alert Fineco e, se disponibili, aggiunge i dati tecnici TradingView."""
     header = (
         "🚨 ALERT PREZZO FINECO\n\n"
         f"{alert.titolo} | {alert.mercato}\n"
@@ -64,28 +66,30 @@ def format_whatsapp(alert: FinecoAlert, tv: TradingViewData | None = None) -> st
         return (
             header
             + "\n📊 ANALISI TRADINGVIEW\n\n"
-            + "Dati TradingView non ancora disponibili per questo alert.\n\n"
+            + "Dati TradingView non disponibili al momento per questo alert.\n\n"
             + "Fonte alert: Fineco\n"
-            + "Dati tecnici: TradingView (non ancora collegati)"
+            + "Dati mercato/rating: TradingView\n"
+            + "Livelli operativi: non calcolati"
         )
 
     return (
         header
-        + "\n📊 ANALISI TRADINGVIEW\n\n"
+        + "\n📊 DATI TRADINGVIEW\n\n"
         + f"Prezzo attuale: {_v(tv.prezzo_attuale)}\n"
-        + f"Segnale tecnico: {_v(tv.segnale)}\n\n"
-        + "🟢 ZONA DI INGRESSO\n"
-        + f"Range: {_v(tv.range_min)} - {_v(tv.range_max)}\n"
-        + f"Entry ideale: {_v(tv.entry_ideale)}\n\n"
-        + "🛑 STOP LOSS\n"
-        + f"SL: {_v(tv.stop_loss)}\n\n"
-        + "🎯 TARGET\n"
-        + f"TP1: {_v(tv.tp1)}  ({_v(tv.tp1_pct)})\n"
-        + f"TP2: {_v(tv.tp2)}  ({_v(tv.tp2_pct)})\n"
-        + f"TP3: {_v(tv.tp3)}  ({_v(tv.tp3_pct)})\n\n"
-        + "📈 VALUTAZIONE\n"
+        + f"1H: {_v(tv.segnale_1h)}\n"
+        + f"4H: {_v(tv.segnale_4h)}\n"
+        + f"1D: {_v(tv.segnale_1d)}\n\n"
+        + "🎯 ANALISI OPERATIVA\n"
+        + f"Zona ingresso: {_v(tv.range_min)} - {_v(tv.range_max)}\n"
+        + f"Entry ideale: {_v(tv.entry_ideale)}\n"
+        + f"Stop Loss: {_v(tv.stop_loss)}\n\n"
+        + f"TP1: {_v(tv.tp1)}  {_v(tv.tp1_pct)}\n"
+        + f"TP2: {_v(tv.tp2)}  {_v(tv.tp2_pct)}\n"
+        + f"TP3: {_v(tv.tp3)}  {_v(tv.tp3_pct)}\n\n"
+        + "📈 STATO\n"
         + f"Prezzo nella Buy Zone: {_v(tv.prezzo_in_buy_zone)}\n"
         + f"Azione: {_v(tv.azione)}\n\n"
         + "Fonte alert: Fineco\n"
-        + "Dati tecnici: TradingView"
+        + "Dati mercato/rating: TradingView\n"
+        + "Entry/SL/TP: calcolo Trading Engine su dati TradingView"
     )
