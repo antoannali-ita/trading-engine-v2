@@ -47,6 +47,47 @@ def get_live_price(ticker: str):
     return None, None, "N/D"
 
 
+def build_live_chart(ticker: str, trade: dict, current_price, updated_at):
+    """Build the chart without letting a stale charting module break the page.
+
+    During Streamlit rolling deploys the page and imported module can briefly be
+    on different revisions. Newer charting accepts current_price kwargs; older
+    charting does not. In that case build the legacy chart and overlay the live
+    level directly on the returned Plotly figure.
+    """
+    kwargs = {
+        "entry": trade.get("entry"),
+        "stop": trade.get("stop"),
+        "tp1": trade.get("tp1"),
+        "tp2": trade.get("tp2"),
+    }
+    try:
+        return build_price_chart(
+            ticker,
+            **kwargs,
+            current_price=current_price,
+            current_price_time=updated_at,
+        )
+    except TypeError:
+        chart = build_price_chart(ticker, **kwargs)
+        if chart is not None and isinstance(current_price, (int, float)):
+            annotation = f"Prezzo corrente {current_price:.2f}"
+            if updated_at:
+                annotation += f" · {updated_at}"
+            try:
+                chart.add_hline(
+                    y=current_price,
+                    line_dash="solid",
+                    annotation_text=annotation,
+                    annotation_position="bottom right",
+                    row=1,
+                    col=1,
+                )
+            except Exception:
+                pass
+        return chart
+
+
 st.set_page_config(page_title="Trade Committee", page_icon="🔬", layout="wide")
 st.title("🔬 Trade Committee · Pre-Trade Check")
 st.caption("Analisi manuale indipendente prima di un eventuale acquisto. CORE invariato. Nessun ordine automatico.")
@@ -123,15 +164,7 @@ def render_live_market(ticker: str, trade: dict, analysis_price):
     else:
         st.caption("Prezzo live non disponibile. Il Committee e il CORE snapshot restano invariati.")
 
-    chart = build_price_chart(
-        ticker,
-        entry=trade.get("entry"),
-        stop=trade.get("stop"),
-        tp1=trade.get("tp1"),
-        tp2=trade.get("tp2"),
-        current_price=current_price,
-        current_price_time=updated_at,
-    )
+    chart = build_live_chart(ticker, trade, current_price, updated_at)
     if chart is not None:
         st.plotly_chart(chart, use_container_width=True)
 
