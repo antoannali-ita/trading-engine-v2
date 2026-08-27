@@ -4,6 +4,7 @@ import os
 from email.header import decode_header, make_header
 
 from fineco_alert_bridge.parser import format_whatsapp, parse_fineco_alert
+from fineco_alert_bridge.tradingview import fetch_tradingview_data
 from fineco_alert_bridge.whatsapp import send_callmebot
 
 IMAP_HOST = os.getenv("FINECO_IMAP_HOST", "imap.gmail.com")
@@ -38,7 +39,6 @@ def _select_mailbox(mail: imaplib.IMAP4_SSL) -> str:
     status, boxes = mail.list()
     decoded = [raw.decode("utf-8", errors="replace") for raw in (boxes or [])] if status == "OK" else []
 
-    # Prima prova l'etichetta configurata (es. BANCHE), anche se Gmail la espone con virgolette.
     for line in decoded:
         if FINECO_LABEL.lower() in line.lower():
             mailbox = line.split('"/"')[-1].strip() if '"/"' in line else line.split()[-1]
@@ -46,7 +46,6 @@ def _select_mailbox(mail: imaplib.IMAP4_SSL) -> str:
             if status == "OK":
                 return mailbox
 
-    # Poi usa la cartella speciale All Mail, così non dipendiamo da INBOX.
     for line in decoded:
         if "\\All" in line:
             mailbox = line.split('"/"')[-1].strip() if '"/"' in line else line.split()[-1]
@@ -96,7 +95,23 @@ def process_unread_alerts() -> int:
                 print(f"SKIP {msg_id.decode()}: formato Fineco non riconosciuto")
                 continue
 
-            send_callmebot(format_whatsapp(alert))
+            # TradingView viene interrogato SOLO quando esiste un nuovo alert Fineco valido.
+            tv = None
+            try:
+                print(f"TradingView lookup: {alert.titolo} | {alert.mercato}")
+                tv = fetch_tradingview_data(alert)
+                if tv is None:
+                    print("TradingView: dati non disponibili, invio comunque alert Fineco")
+                else:
+                    print(
+                        f"TradingView OK: prezzo={tv.prezzo_attuale} "
+                        f"1H={tv.segnale_1h} 4H={tv.segnale_4h} 1D={tv.segnale_1d}"
+                    )
+            except Exception as exc:
+                print(f"TradingView ERROR: {type(exc).__name__}: {exc}")
+
+            # L'alert Fineco non viene perso se TradingView è temporaneamente indisponibile.
+            send_callmebot(format_whatsapp(alert, tv))
             mail.store(msg_id, "+FLAGS", "\\Seen")
             processed += 1
             print(f"SENT {alert.titolo} {alert.mercato} {alert.prezzo}")
