@@ -6,8 +6,45 @@ import pandas as pd
 import streamlit as st
 
 from trade_committee import run_committee
-from trade_committee.charting import build_price_chart, get_live_price
+from trade_committee import charting as committee_charting
 from trade_committee.input_resolver import resolve_many
+
+build_price_chart = committee_charting.build_price_chart
+
+
+def get_live_price(ticker: str):
+    """Defensive live-price resolver.
+
+    Prefer the shared charting helper when available. If Streamlit is serving a
+    rolling/stale module version during deploy, fall back locally instead of
+    crashing the entire dashboard at import time.
+    """
+    helper = getattr(committee_charting, "get_live_price", None)
+    if callable(helper):
+        return helper(ticker)
+
+    import yfinance as yf
+
+    symbol = ticker.strip().upper()
+    t = yf.Ticker(symbol)
+    for interval, period, source in (
+        ("1m", "1d", "Yahoo 1m"),
+        ("5m", "5d", "Yahoo 5m"),
+        ("1d", "5d", "Yahoo EOD"),
+    ):
+        try:
+            hist = t.history(period=period, interval=interval, auto_adjust=False, prepost=False)
+            close = hist["Close"].dropna() if not hist.empty and "Close" in hist else None
+            if close is not None and not close.empty:
+                ts = close.index[-1]
+                try:
+                    ts_label = ts.to_pydatetime().astimezone().strftime("%d/%m/%Y %H:%M:%S %Z")
+                except Exception:
+                    ts_label = str(ts)
+                return float(close.iloc[-1]), ts_label, source + " · fallback"
+        except Exception:
+            continue
+    return None, None, "N/D"
 
 
 st.set_page_config(page_title="Trade Committee", page_icon="🔬", layout="wide")
