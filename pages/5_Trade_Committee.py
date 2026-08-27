@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from trade_committee import run_committee
-from trade_committee.charting import build_price_chart
+from trade_committee.charting import build_price_chart, get_live_price
 from trade_committee.input_resolver import resolve_many
 
 
@@ -68,6 +68,37 @@ def ratio(v):
     return f"{v:.2f}" if isinstance(v, (int, float)) else "N/D"
 
 
+@st.fragment(run_every="30s")
+def render_live_market(ticker: str, trade: dict, analysis_price):
+    current_price, updated_at, source = get_live_price(ticker)
+
+    st.markdown("#### Prezzo corrente")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Prezzo live", money(current_price))
+    if isinstance(current_price, (int, float)) and isinstance(analysis_price, (int, float)) and analysis_price:
+        move_pct = (current_price / analysis_price - 1.0) * 100.0
+        c2.metric("Da analisi", f"{move_pct:+.2f}%", delta=f"{current_price - analysis_price:+.2f}")
+    else:
+        c2.metric("Da analisi", "N/D")
+    c3.metric("Fonte", source)
+    if updated_at:
+        st.caption(f"Aggiornato: {updated_at} · refresh automatico ogni 30 secondi. Il refresh del prezzo non rilancia il Committee e non modifica il CORE snapshot.")
+    else:
+        st.caption("Prezzo live non disponibile. Il Committee e il CORE snapshot restano invariati.")
+
+    chart = build_price_chart(
+        ticker,
+        entry=trade.get("entry"),
+        stop=trade.get("stop"),
+        tp1=trade.get("tp1"),
+        tp2=trade.get("tp2"),
+        current_price=current_price,
+        current_price_time=updated_at,
+    )
+    if chart is not None:
+        st.plotly_chart(chart, use_container_width=True)
+
+
 def render_result(r: dict):
     ticker = r["ticker"]
     name = r.get("resolved_name")
@@ -77,7 +108,7 @@ def render_result(r: dict):
     trade = r.get("trade_plan") or {}
     a, b, c, d, e, f = st.columns(6)
     a.metric("Verdetto", r.get("verdict", "N/D"))
-    b.metric("Prezzo", money(r.get("price")))
+    b.metric("Prezzo analisi", money(r.get("price")))
     c.metric("Entry CORE", money(trade.get("entry")))
     d.metric("Stop Loss", money(trade.get("stop")))
     e.metric("TP1", money(trade.get("tp1")))
@@ -116,15 +147,7 @@ def render_result(r: dict):
     else:
         st.info("Snapshot CORE non trovato: il Committee resta in modalità research e non può approvare una trade ricostruita localmente.")
 
-    chart = build_price_chart(
-        ticker,
-        entry=trade.get("entry"),
-        stop=trade.get("stop"),
-        tp1=trade.get("tp1"),
-        tp2=trade.get("tp2"),
-    )
-    if chart is not None:
-        st.plotly_chart(chart, use_container_width=True)
+    render_live_market(ticker, trade, r.get("price"))
 
     yes, no = st.columns(2)
     with yes:
