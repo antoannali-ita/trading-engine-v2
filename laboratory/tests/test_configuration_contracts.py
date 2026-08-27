@@ -39,3 +39,16 @@ def test_legacy_daily_workflow_is_manual_only_and_uses_5k_cap():
     workflow = _text(".github/workflows/lab_paper_daily.yml")
     assert "schedule:" not in workflow
     assert 'LAB_MAX_POSITION_USD: "5000"' in workflow
+
+
+def test_legacy_manual_workflow_matches_v2_operational_pipeline():
+    workflow = _text(".github/workflows/lab_paper_daily.yml")
+    assert "group: strategy-lab-daily-opportunity-feed" in workflow
+    assert 'LAB_MAX_NEW_BUYS: "12"' in workflow
+    assert 'LAB_MAX_ACTIVE_POSITIONS: "80"' in workflow
+    assert 'LAB_MAX_ACTIVE_PER_STRATEGY: "24"' in workflow
+    assert "python jobs/run_paper_signals_v2.py" in workflow
+    assert "python jobs/enrich_lab_metadata.py" in workflow
+    assert "python jobs/run_signal_outcomes.py" in workflow
+    assert "python jobs/sync_paper_execution.py" in workflow
+    assert "python jobs/build_strategy_snapshots.py" in workflow
