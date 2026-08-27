@@ -13,12 +13,12 @@ os.environ["DASHBOARD_PASSWORD"] = ""
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PAGES_DIR = REPO_ROOT / "pages"
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-if str(REPO_ROOT / "dashboard") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "dashboard"))
+DASHBOARD_DIR = REPO_ROOT / "dashboard"
+for path in (REPO_ROOT, DASHBOARD_DIR, PAGES_DIR):
+    value = str(path)
+    if value not in sys.path:
+        sys.path.insert(0, value)
 
-# Layout unico per tutte le pagine navigate da questo entry point.
 st.set_page_config(
     page_title="Trading Engine Control Center",
     page_icon="📈",
@@ -26,12 +26,26 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Evita che le pagine nuove sembrino strette/centrate su monitor ampi.
+# Layout responsive unico per tutte le pagine gestite da st.navigation.
 st.markdown(
     """
     <style>
-      .block-container {max-width: 100% !important; padding-left: 2rem; padding-right: 2rem;}
-      [data-testid="stAppViewContainer"] .main .block-container {width: 100% !important;}
+      [data-testid="stMainBlockContainer"],
+      section.main > div.block-container,
+      .block-container {
+          max-width: none !important;
+          width: 100% !important;
+          padding-left: clamp(1rem, 2vw, 2.5rem) !important;
+          padding-right: clamp(1rem, 2vw, 2.5rem) !important;
+      }
+      [data-testid="stAppViewContainer"] > .main { width: 100% !important; }
+      [data-testid="stDataFrame"] { width: 100% !important; }
+      @media (max-width: 900px) {
+        [data-testid="stMainBlockContainer"], .block-container {
+          padding-left: 0.8rem !important;
+          padding-right: 0.8rem !important;
+        }
+      }
     </style>
     """,
     unsafe_allow_html=True,
