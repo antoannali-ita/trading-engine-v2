@@ -1,165 +1,247 @@
 from __future__ import annotations
 
 from datetime import datetime
+import pandas as pd
 import streamlit as st
 
 from trade_committee import run_committee
 from trade_committee.charting import build_price_chart
+from trade_committee.input_resolver import resolve_many
+from trade_committee.persistence import fail_run, finish_run, make_run_id, start_run, ticker_history
 
 st.set_page_config(page_title="Trade Committee", page_icon="🔬", layout="wide")
 st.title("🔬 Trade Committee · Pre-Trade Check")
-st.caption("LAB-RESEARCH-001 · Conferma indipendente prima di un eventuale acquisto. Nessun ordine automatico, CORE invariato.")
+st.caption("Analisi manuale indipendente prima di un eventuale acquisto. CORE invariato, nessun ordine automatico.")
 
-c1, c2 = st.columns([4, 1])
-with c1:
-    ticker = st.text_input("Ticker", placeholder="Es. ORCL, GSK, CSCO").strip().upper()
-with c2:
-    st.write("")
-    start = st.button("🔬 ANALIZZA", type="primary", use_container_width=True, disabled=not bool(ticker))
+raw = st.text_area(
+    "Titolo/i da analizzare",
+    placeholder="Es. TSM, NVIDIA, Novo Nordisk\nSeparatore principale: virgola",
+    height=82,
+    help="Puoi usare ticker oppure nome società. Per più titoli usa la virgola. Sono accettati anche punto e virgola e ritorno a capo. Massimo 10 titoli per batch.",
+)
+start = st.button("🔬 ANALIZZA", type="primary", use_container_width=False, disabled=not bool(raw.strip()))
+st.caption("Ricerca: ticker o nome società · Multi-titolo: **virgola (,)** · accettati anche `;` e una riga per titolo.")
+
+if "trade_committee_results" not in st.session_state:
+    st.session_state["trade_committee_results"] = {}
 
 if start:
-    progress = st.progress(0, text="Avvio Trade Committee...")
-    status = st.status(f"Analisi {ticker} in corso", expanded=True)
-
-    def cb(step, label, state):
-        progress.progress(step / 12, text=f"{step}/12 · {label}")
-        icon = "✅" if state == "REAL" else ("🟡" if state in {"PARTIAL", "N/A"} else "⚪")
-        status.write(f"{icon} {step:02d} · {label} · {state}")
-
     try:
-        result = run_committee(ticker, cb)
-        status.update(label=f"Trade Committee {ticker} completato", state="complete", expanded=False)
-        progress.progress(1.0, text="Analisi completata")
-        st.session_state["trade_committee_result"] = result
+        resolved = resolve_many(raw, max_symbols=10)
     except Exception as exc:
-        status.update(label=f"Analisi {ticker} fallita", state="error")
-        st.error(f"Errore: {type(exc).__name__}: {exc}")
+        st.error(f"Input non valido: {exc}")
+        resolved = []
 
-r = st.session_state.get("trade_committee_result")
-if r:
-    st.divider()
-    st.subheader(f"{r['ticker']} · Decisione")
-    a, b, c, d, e = st.columns(5)
-    a.metric("Verdetto", r["verdict"])
-    b.metric("Committee Score", f"{r['committee_score']}/100")
-    c.metric("Data Confidence", f"{r['data_confidence']:.0f}%")
-    d.metric("Prezzo", f"{r['price']:.2f}" if r.get("price") else "N/D")
-    cov = r.get("coverage_summary", {})
-    e.metric("Copertura", f"{cov.get('real', 0)} reali / {cov.get('partial', 0)} parziali")
+    if resolved:
+        batch_progress = st.progress(0, text=f"0/{len(resolved)} titoli analizzati")
+        batch_results = {}
+        for idx, item in enumerate(resolved, start=1):
+            ticker = item.ticker
+            run_id = make_run_id(ticker)
+            start_run(run_id, ticker)
+            with st.status(f"{ticker} · analisi in corso", expanded=False) as status:
+                step_box = st.empty()
+                def cb(step, label, state):
+                    step_box.caption(f"{step}/12 · {label} · {state}")
+                try:
+                    result = run_committee(ticker, cb)
+                    result["run_id"] = run_id
+                    result["resolved_name"] = item.name
+                    result["input_query"] = item.query
+                    result["input_source"] = item.source
+                    finish_run(run_id, result)
+                    batch_results[ticker] = result
+                    status.update(label=f"{ticker} · completato", state="complete")
+                except Exception as exc:
+                    fail_run(run_id, exc)
+                    status.update(label=f"{ticker} · fallito", state="error")
+                    st.error(f"{ticker}: {type(exc).__name__}: {exc}")
+            batch_progress.progress(idx / len(resolved), text=f"{idx}/{len(resolved)} titoli analizzati")
+        st.session_state["trade_committee_results"] = batch_results
 
-    if r["verdict"] == "APPROVE":
-        st.success("🟢 APPROVE · Il Committee conferma il candidato. La decisione e l'ordine restano manuali.")
-    elif r["verdict"] == "WAIT":
-        st.warning("🟡 WAIT · Non comprerei adesso: servono condizioni o dati migliori.")
-    else:
-        st.error("🔴 REJECT · Il Committee non conferma l'acquisto.")
-    if r.get("hard_reasons"):
-        st.caption("Gate / motivi di blocco: " + " · ".join(r["hard_reasons"]))
+results = st.session_state.get("trade_committee_results") or {}
 
-    trade = r.get("trade_plan", {})
-    chart = build_price_chart(
-        r["ticker"], entry=trade.get("entry"), stop=trade.get("stop"), tp1=trade.get("tp1"), tp2=trade.get("tp2")
+
+def money(v):
+    return f"{v:.2f}" if isinstance(v, (int, float)) else "N/D"
+
+
+def ratio(v):
+    return f"{v:.2f}" if isinstance(v, (int, float)) else "N/D"
+
+
+def delta(v):
+    if not isinstance(v, (int, float)):
+        return "-"
+    return f"{v:+.2f}"
+
+
+def render_history(ticker: str):
+    history, err = ticker_history(ticker, limit=20)
+    st.markdown("### Storico analisi")
+    st.caption("Confronta cosa proponeva il Committee nelle analisi precedenti e cosa è cambiato nelle esecuzioni successive.")
+    if err:
+        st.info("Storico persistente non disponibile finché il database Trade Committee non è configurato/applicato.")
+        return
+    if not history:
+        st.info("Questa è la prima analisi persistita per il titolo.")
+        return
+
+    rows = []
+    for h in history:
+        when = str(h.get("when") or "")
+        try:
+            when = datetime.fromisoformat(when.replace("Z", "+00:00")).astimezone().strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            pass
+        rows.append({
+            "Quando": when,
+            "Verdetto": h.get("verdict") or h.get("status"),
+            "Prezzo": h.get("price"),
+            "Entry": h.get("entry"),
+            "SL": h.get("stop"),
+            "TP1": h.get("tp1"),
+            "TP2": h.get("tp2"),
+            "R/R TP2": h.get("rr2_net"),
+            "Score": h.get("committee_score"),
+            "Confidence": h.get("data_confidence"),
+            "Δ Prezzo": h.get("delta_price"),
+            "Δ Entry": h.get("delta_entry"),
+            "Δ SL": h.get("delta_stop"),
+            "Δ TP1": h.get("delta_tp1"),
+            "Δ TP2": h.get("delta_tp2"),
+            "Cambio verdetto": "SÌ" if h.get("verdict_changed") else "",
+        })
+    frame = pd.DataFrame(rows)
+    st.dataframe(
+        frame,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Prezzo": st.column_config.NumberColumn(format="%.2f"),
+            "Entry": st.column_config.NumberColumn(format="%.2f"),
+            "SL": st.column_config.NumberColumn(format="%.2f"),
+            "TP1": st.column_config.NumberColumn(format="%.2f"),
+            "TP2": st.column_config.NumberColumn(format="%.2f"),
+            "R/R TP2": st.column_config.NumberColumn(format="%.2f"),
+            "Score": st.column_config.NumberColumn(format="%.1f"),
+            "Confidence": st.column_config.NumberColumn(format="%.1f%%"),
+            "Δ Prezzo": st.column_config.NumberColumn(format="%+.2f"),
+            "Δ Entry": st.column_config.NumberColumn(format="%+.2f"),
+            "Δ SL": st.column_config.NumberColumn(format="%+.2f"),
+            "Δ TP1": st.column_config.NumberColumn(format="%+.2f"),
+            "Δ TP2": st.column_config.NumberColumn(format="%+.2f"),
+        },
     )
+
+
+def render_result(r: dict):
+    ticker = r["ticker"]
+    name = r.get("resolved_name")
+    title = f"{ticker} · {name}" if name else ticker
+    st.subheader(title)
+
+    trade = r.get("trade_plan") or {}
+    a, b, c, d, e, f = st.columns(6)
+    a.metric("Verdetto", r.get("verdict", "N/D"))
+    b.metric("Prezzo", money(r.get("price")))
+    c.metric("Entry", money(trade.get("entry")))
+    d.metric("Stop Loss", money(trade.get("stop")))
+    e.metric("TP1", money(trade.get("tp1")))
+    f.metric("TP2", money(trade.get("tp2")))
+
+    a2, b2, c2, d2 = st.columns(4)
+    a2.metric("Committee Score", f"{r.get('committee_score', 0):.1f}/100")
+    b2.metric("Data Confidence", f"{r.get('data_confidence', 0):.0f}%")
+    c2.metric("R/R netto TP2", ratio(trade.get("rr2_net")))
+    run_at = r.get("run_at")
+    try:
+        run_label = datetime.fromisoformat(str(run_at).replace("Z", "+00:00")).astimezone().strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        run_label = str(run_at or "N/D")
+    d2.metric("Analizzato il", run_label)
+
+    verdict = r.get("verdict")
+    reason = r.get("decision_reason") or ""
+    if verdict == "APPROVE":
+        st.success(f"🟢 {verdict} · {reason}")
+    elif str(verdict).startswith("REJECT"):
+        st.error(f"🔴 {verdict} · {reason}")
+    else:
+        st.warning(f"🟡 {verdict} · {reason}")
+    if r.get("hard_reasons"):
+        st.caption("Blocchi: " + " · ".join(r["hard_reasons"]))
+
+    chart = build_price_chart(ticker, entry=trade.get("entry"), stop=trade.get("stop"), tp1=trade.get("tp1"), tp2=trade.get("tp2"))
     if chart is not None:
         st.plotly_chart(chart, use_container_width=True)
 
-    st.subheader("Piano operativo indicativo")
-    def money(v):
-        return f"{v:.2f}" if isinstance(v, (int, float)) else "N/D"
-    def ratio(v):
-        return f"{v:.2f}" if isinstance(v, (int, float)) else "N/D"
-
-    earnings = (r.get("earnings") or {}).get("next", {})
-    plan_rows = [
-        {"Voce": "Entry", "Valore": money(trade.get("entry"))},
-        {"Voce": "Stop", "Valore": money(trade.get("stop"))},
-        {"Voce": "TP1", "Valore": money(trade.get("tp1"))},
-        {"Voce": "TP2", "Valore": money(trade.get("tp2"))},
-        {"Voce": "R/R netto TP1", "Valore": ratio(trade.get("rr1_net"))},
-        {"Voce": "R/R netto TP2", "Valore": ratio(trade.get("rr2_net"))},
-        {"Voce": "Quantità su $2.500", "Valore": trade.get("qty", "N/D")},
-        {"Voce": "Loss max stimata", "Valore": money(trade.get("loss_max"))},
-        {"Voce": "Earnings", "Valore": f"{earnings.get('date', 'N/D')} · {earnings.get('days')} giorni" if earnings.get("days") is not None else earnings.get("date", "N/D")},
-    ]
-    st.dataframe(plan_rows, hide_index=True, use_container_width=True)
-    st.caption(trade.get("method", ""))
-
     yes, no = st.columns(2)
     with yes:
-        st.markdown("### Perché sì")
-        for item in r.get("bull_case") or ["Nessuna conferma forte"]:
+        st.markdown("#### Perché è interessante")
+        for item in r.get("bull_case") or ["Nessuna conferma forte rilevata"]:
             st.write(f"• {item}")
     with no:
-        st.markdown("### Perché no")
-        for item in r.get("bear_case") or ["Nessuna criticità forte"]:
+        st.markdown("#### Cosa non convince")
+        for item in r.get("bear_case") or ["Nessuna criticità materiale rilevata"]:
             st.write(f"• {item}")
 
-    st.subheader("Copertura reale dell'analisi")
-    st.caption("REAL = check eseguito con la fonte indicata · PARTIAL = copertura incompleta · N/A = non applicabile · N/D = non disponibile.")
-    st.dataframe(r.get("coverage", []), hide_index=True, use_container_width=True)
+    render_history(ticker)
 
-    tab1, tab2, tab3, tab4 = st.tabs(["Fondamentali", "Catalizzatori & ownership", "SEC / Mercato", "Portafoglio & Data Quality"])
+    with st.expander("Approfondimento", expanded=False):
+        cov = r.get("coverage_summary") or {}
+        st.caption(f"Copertura: {cov.get('real', 0)} REAL · {cov.get('partial', 0)} PARTIAL · {cov.get('missing', 0)} N/D/FAILED")
+        tabs = st.tabs(["Fondamentali", "Catalizzatori / Ownership", "SEC / Mercato", "Portafoglio / Data Quality"])
+        with tabs[0]:
+            st.dataframe((r.get("quality") or {}).get("checks", []), hide_index=True, use_container_width=True)
+            notes = (r.get("valuation") or {}).get("notes", [])
+            if notes:
+                st.write(" · ".join(notes))
+        with tabs[1]:
+            sentiment = r.get("sentiment") or {}
+            st.dataframe([sentiment.get("analyst", {})], hide_index=True, use_container_width=True)
+            if sentiment.get("news"):
+                st.dataframe(sentiment["news"], hide_index=True, use_container_width=True)
+        with tabs[2]:
+            sec = r.get("sec") or {}
+            st.write(f"SEC EDGAR: **{sec.get('status', 'N/D')}**")
+            if sec.get("filings"):
+                st.dataframe(sec["filings"], hide_index=True, use_container_width=True)
+            ctx = r.get("market_context") or {}
+            st.json({"benchmark": ctx.get("benchmark"), "sector": ctx.get("sector"), "relative": ctx.get("relative")})
+        with tabs[3]:
+            portfolio = r.get("portfolio") or {}
+            st.write(f"Già in portafoglio: **{'SÌ' if portfolio.get('already_owned') else 'NO'}**")
+            st.caption(portfolio.get("note", ""))
+            st.dataframe(r.get("coverage", []), hide_index=True, use_container_width=True)
 
-    with tab1:
-        st.markdown("#### Qualità finanziaria")
-        st.dataframe((r.get("quality") or {}).get("checks", []), hide_index=True, use_container_width=True)
-        st.markdown("#### Valutazione")
-        st.write(" · ".join((r.get("valuation") or {}).get("notes", [])) or "N/D")
-        st.markdown("#### Metriche")
-        labels = {
-            "marketCap": "Market Cap", "trailingPE": "P/E", "forwardPE": "Forward P/E", "pegRatio": "PEG",
-            "enterpriseToEbitda": "EV/EBITDA", "returnOnEquity": "ROE", "currentRatio": "Current Ratio",
-            "debtToEquity": "Debt/Equity", "freeCashflow": "FCF", "operatingCashflow": "OCF",
-            "revenueGrowth": "Revenue Growth", "earningsGrowth": "Earnings Growth", "profitMargins": "Profit Margin",
-            "fcfYield": "FCF Yield",
-        }
-        rows = [{"Metrica": labels.get(k, k), "Valore": v if v is not None else "N/D"} for k, v in (r.get("fundamentals") or {}).items() if k in labels]
-        st.dataframe(rows, hide_index=True, use_container_width=True)
 
-    with tab2:
-        analyst = (r.get("sentiment") or {}).get("analyst", {})
-        st.markdown("#### Analisti")
-        st.dataframe([analyst], hide_index=True, use_container_width=True)
-        st.markdown("#### Short / istituzionali")
-        st.dataframe([(r.get("sentiment") or {}).get("short", {})], hide_index=True, use_container_width=True)
-        news = (r.get("sentiment") or {}).get("news", [])
-        if news:
-            st.markdown("#### News recenti")
-            st.dataframe(news, hide_index=True, use_container_width=True)
-        insiders = (r.get("sentiment") or {}).get("insiders", [])
-        if insiders:
-            st.markdown("#### Insider transactions")
-            st.dataframe(insiders, hide_index=True, use_container_width=True)
-        institutions = (r.get("sentiment") or {}).get("institutions", [])
-        if institutions:
-            st.markdown("#### Institutional holders")
-            st.dataframe(institutions, hide_index=True, use_container_width=True)
+if results:
+    st.divider()
+    if len(results) == 1:
+        render_result(next(iter(results.values())))
+    else:
+        st.subheader(f"Risultati batch · {len(results)} titoli")
+        summary = []
+        for ticker, r in results.items():
+            trade = r.get("trade_plan") or {}
+            summary.append({
+                "Ticker": ticker,
+                "Nome": r.get("resolved_name") or "",
+                "Verdetto": r.get("verdict"),
+                "Prezzo": r.get("price"),
+                "Entry": trade.get("entry"),
+                "SL": trade.get("stop"),
+                "TP1": trade.get("tp1"),
+                "TP2": trade.get("tp2"),
+                "R/R TP2": trade.get("rr2_net"),
+                "Score": r.get("committee_score"),
+                "Confidence": r.get("data_confidence"),
+            })
+        st.dataframe(summary, hide_index=True, use_container_width=True)
+        tabs = st.tabs(list(results.keys()))
+        for tab, r in zip(tabs, results.values()):
+            with tab:
+                render_result(r)
 
-    with tab3:
-        sec = r.get("sec", {})
-        st.markdown(f"#### SEC EDGAR · {sec.get('status', 'N/D')}")
-        st.caption(sec.get("note", ""))
-        if sec.get("filings"):
-            st.dataframe(sec["filings"], hide_index=True, use_container_width=True)
-        ctx = r.get("market_context", {})
-        st.markdown("#### Forza relativa")
-        rel = ctx.get("relative", {})
-        st.dataframe([{"Benchmark": ctx.get("benchmark"), "Settore": ctx.get("sector"), "ETF settore": ctx.get("sector_ticker"), "RS 1m": rel.get("1m"), "RS 3m": rel.get("3m"), "RS 6m": rel.get("6m")}], hide_index=True, use_container_width=True)
-
-    with tab4:
-        st.markdown("#### Contesto portafoglio Production")
-        portfolio = r.get("portfolio", {})
-        st.write(f"Già presente: **{'SÌ' if portfolio.get('already_owned') else 'NO'}**")
-        if portfolio.get("already_owned"):
-            st.json(portfolio.get("position"))
-        st.write(f"Peso stimato: **{(portfolio.get('estimated_weight') or 0)*100:.1f}%**")
-        st.caption(portfolio.get("note", ""))
-        st.markdown("#### Financial rigor")
-        rigor_rows = [{"Check": k, **v} for k, v in (r.get("financial_rigor") or {}).items()]
-        st.dataframe(rigor_rows, hide_index=True, use_container_width=True)
-        st.markdown("#### Cross-check TradingView")
-        st.json(r.get("tradingview_crosscheck", {}))
-
-    st.caption(r.get("guardrail", ""))
-
-st.caption(f"LAB-RESEARCH-001 · V2 · Updated: {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S %Z')}")
+st.caption(f"Trade Committee V2 · Updated: {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S %Z')}")
