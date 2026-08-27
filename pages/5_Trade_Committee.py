@@ -105,24 +105,21 @@ if r:
     st.warning(r['guardrail'])
 
 st.divider()
-st.subheader("🧾 Run Log / Diagnostics")
+st.subheader("🕘 Storico analisi")
 persist_state = st.session_state.get("trade_committee_persistence")
 if persist_state:
     failures=[f"{k}: {v.get('reason')}" for k,v in persist_state.items() if isinstance(v,dict) and not v.get("ok")]
     if failures:
         st.warning("Persistenza DB non completa: " + " | ".join(failures))
-    else:
-        st.success("Log del run salvato su Supabase.")
 
 runs, runs_error = recent_runs(20)
 if runs_error:
-    st.info(f"Storico DB non disponibile: {runs_error}. Il log del run corrente resta comunque visibile in pagina.")
+    st.info(f"Storico DB non disponibile: {runs_error}.")
 elif not runs:
-    st.caption("Nessun run persistito ancora.")
+    st.caption("Nessuna analisi precedente persistita.")
 else:
-    st.dataframe(runs, hide_index=True, width="stretch")
     run_ids=[x.get("run_id") for x in runs if x.get("run_id")]
-    selected=st.selectbox("Dettaglio run", run_ids, index=0)
+    selected=st.selectbox("Seleziona un'analisi precedente", run_ids, index=0)
     details, details_error = run_steps(selected)
     if details_error:
         st.warning(f"Dettaglio non disponibile: {details_error}")
