@@ -157,9 +157,6 @@ for r in equities:
 
     if live_native is not None and quote_currency == "EUR":
         if usd_eur is not None and usd_eur > 0:
-            # Excel convention: native EUR price converted to USD with EUR/USD.
-            # usd_eur stores EUR per USD, so EUR/USD = 1 / usd_eur.
-            # Therefore USD price = EUR price / (EUR per USD).
             px = live_native / usd_eur
             source = "LIVE EUR→USD"
         else:
@@ -307,8 +304,6 @@ with st.sidebar:
             "Questa pagina mostra **capitale reale** e resta separata da Laboratory e paper trading. "
             "`LIVE EUR→USD` indica un titolo quotato in euro convertito in USD con EUR/USD corrente."
         )
-    with st.expander("TradingView", expanded=False):
-        st.markdown("La colonna **TradingView** apre direttamente il grafico del titolo. Il mapping exchange è esplicito per evitare ticker ambigui tra Yahoo e TradingView.")
     with st.expander("Target tracking", expanded=False):
         st.markdown("`Distance to Target %` e `Target Gap $` misurano la distanza dal target configurato. `TARGET HIT` indica target raggiunto o superato.")
     with st.expander("FX & concentration", expanded=False):
