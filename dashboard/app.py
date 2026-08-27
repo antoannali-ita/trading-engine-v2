@@ -3,21 +3,23 @@ from __future__ import annotations
 import os
 import traceback
 from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
 
 # TEMPORARY: autenticazione dashboard sospesa su richiesta.
-# Per riattivarla rimuovere questa riga e ripristinare DASHBOARD_PASSWORD.
 os.environ["DASHBOARD_PASSWORD"] = ""
+
+# Streamlit Cloud avvia dashboard/app.py, mentre le pagine storiche del progetto
+# sono nella directory /pages alla root del repository. Usiamo path assoluti
+# per evitare che st.navigation cerchi erroneamente dashboard/pages/...
+REPO_ROOT = Path(__file__).resolve().parent.parent
+PAGES_DIR = REPO_ROOT / "pages"
 
 
 def _render_recovery(exc: Exception) -> None:
-    """Mostra una pagina di recupero invece di lasciare una schermata bianca."""
     st.error("⚠️ Trading Engine Control Center temporaneamente non disponibile")
-    st.write(
-        "L'app è partita, ma una dipendenza o una sorgente dati ha generato un errore durante il caricamento. "
-        "Può succedere durante un redeploy Streamlit o per un problema temporaneo di rete/Supabase/Yahoo."
-    )
+    st.write("L'app è partita, ma si è verificato un errore durante il caricamento della dashboard.")
     c1, c2 = st.columns([1, 3])
     with c1:
         if st.button("🔄 Riprova", type="primary", use_container_width=True):
@@ -28,18 +30,14 @@ def _render_recovery(exc: Exception) -> None:
                 pass
             st.rerun()
     with c2:
-        st.caption(
-            "Se dopo 1-2 tentativi la pagina resta in errore, controllare i log Streamlit Cloud."
-        )
+        st.caption("Se dopo il redeploy la pagina resta in errore, controllare il dettaglio tecnico.")
     st.markdown("### Stato bootstrap")
     st.write(f"**Ora:** {datetime.now().astimezone().strftime('%d/%m/%Y %H:%M:%S %Z')}")
     st.write(f"**Errore:** `{type(exc).__name__}`")
     st.write(f"**Messaggio:** {str(exc) or 'N/D'}")
     with st.expander("🔧 Dettaglio tecnico", expanded=False):
         st.code(traceback.format_exc(), language="text")
-    st.info(
-        "Un errore del sito non modifica Production, le posizioni Fineco o i workflow già avviati."
-    )
+    st.info("Un errore del sito non modifica Production, le posizioni Fineco o i workflow già avviati.")
 
 
 GUIDE = {
@@ -60,31 +58,34 @@ GUIDE = {
 }
 
 
-def _page(path: str, title: str, icon: str):
-    return st.Page(path, title=title, icon=icon)
+def _page(filename: str, title: str, icon: str):
+    path = PAGES_DIR / filename
+    if not path.is_file():
+        raise FileNotFoundError(f"Pagina dashboard non trovata: {path}")
+    return st.Page(str(path), title=title, icon=icon)
 
 
 try:
     navigation = {
         "🟢 PRODUZIONE": [
-            _page("pages/0_Home.py", "Home", "🏠"),
-            _page("pages/1_Portafoglio_Reale.py", "Portafoglio reale", "💼"),
-            _page("pages/1_Watchlist.py", "Watchlist", "👀"),
-            _page("pages/5_Trade_Committee.py", "Trade Committee", "🔬"),
-            _page("pages/6_Esegui_Ora.py", "Esegui ora", "▶️"),
-            _page("pages/7_Notifiche.py", "Notifiche", "🔔"),
+            _page("0_Home.py", "Home", "🏠"),
+            _page("1_Portafoglio_Reale.py", "Portafoglio reale", "💼"),
+            _page("1_Watchlist.py", "Watchlist", "👀"),
+            _page("5_Trade_Committee.py", "Trade Committee", "🔬"),
+            _page("6_Esegui_Ora.py", "Esegui ora", "▶️"),
+            _page("7_Notifiche.py", "Notifiche", "🔔"),
         ],
         "🧪 LABORATORIO": [
-            _page("pages/2_Laboratory_Overview.py", "Panoramica Laboratorio", "🧭"),
-            _page("pages/2_Laboratory_Control.py", "Controllo Laboratorio", "🧪"),
-            _page("pages/2_Strategy_Lab.py", "Strategie", "🧠"),
-            _page("pages/2_Strategie_Parametri.py", "Parametri strategie", "🎛️"),
-            _page("pages/2_Feature_Enrichment.py", "Feature Enrichment", "🧬"),
-            _page("pages/3_Paper_Portfolio.py", "Paper Portfolio", "📄"),
-            _page("pages/4_Research_Evolution.py", "Evoluzione ricerca", "📈"),
+            _page("2_Laboratory_Overview.py", "Panoramica Laboratorio", "🧭"),
+            _page("2_Laboratory_Control.py", "Controllo Laboratorio", "🧪"),
+            _page("2_Strategy_Lab.py", "Strategie", "🧠"),
+            _page("2_Strategie_Parametri.py", "Parametri strategie", "🎛️"),
+            _page("2_Feature_Enrichment.py", "Feature Enrichment", "🧬"),
+            _page("3_Paper_Portfolio.py", "Paper Portfolio", "📄"),
+            _page("4_Research_Evolution.py", "Evoluzione ricerca", "📈"),
         ],
         "ALTRO": [
-            _page("pages/99_App_Completa.py", "App completa", "🧰"),
+            _page("99_App_Completa.py", "App completa", "🧰"),
         ],
     }
 
