@@ -39,6 +39,14 @@ jobs:
         working-directory: laboratory
         run: pytest -q tests
 
+      - name: Recalibrate dynamic exits for active paper positions
+        working-directory: laboratory
+        env:
+          LAB_DYNAMIC_EXIT_ENABLED: "1"
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python jobs/run_dynamic_exit.py
+
       - name: Generate opportunity ladder and paper feed
         working-directory: laboratory
         env:
