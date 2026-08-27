@@ -14,7 +14,7 @@ permissions:
 jobs:
   fineco-alerts:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
       - name: Check Italian market alert window
         id: window
@@ -40,7 +40,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Read Fineco alerts and send WhatsApp
+      - name: Install Fineco bridge dependencies
+        if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+        run: python -m pip install --disable-pip-version-check "tradingview-screener>=3.0"
+
+      - name: Read Fineco alerts, enrich with TradingView and send WhatsApp
         if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
         env:
           GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
