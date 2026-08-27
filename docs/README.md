@@ -1,7 +1,7 @@
 # Trading Engine v2 — Documentazione ufficiale
 
-**Versione documentazione:** 1.2 ITA  
-**Baseline tecnica:** 26/08/2026  
+**Versione documentazione:** 1.3 ITA  
+**Baseline tecnica:** 27/08/2026  
 **Stato:** fotografia AS-IS + roadmap TO-BE + Laboratory research  
 **Fonte primaria:** codice, configurazioni, test e documenti di governance versionati nel repository.
 
@@ -20,6 +20,9 @@ Questa cartella è la memoria funzionale e tecnica permanente di **Trading Engin
 | [PRODUCTION_OPERATIONS.md](PRODUCTION_OPERATIONS.md) | Workflow, schedulazioni, configurazioni e notifiche Production |
 | [TESTING_AND_VALIDATION.md](TESTING_AND_VALIDATION.md) | Test, parity, evidence e gate |
 | [LAB_FEATURE_ENRICHMENT.md](LAB_FEATURE_ENRICHMENT.md) | **LAB-FEAT-001**: raccolta passiva feature TradingView, research-only |
+| [TRADE_COMMITTEE.md](TRADE_COMMITTEE.md) | **LAB-RESEARCH-001**: deep pre-trade check manuale, fonti, score, gate e UI V2 |
+| [research/TRADE_COMMITTEE_SOURCE_RESEARCH.md](research/TRADE_COMMITTEE_SOURCE_RESEARCH.md) | Audit degli 8 video, fonti e architetture candidate |
+| [research/TRADE_COMMITTEE_REUSE_MAP.md](research/TRADE_COMMITTEE_REUSE_MAP.md) | Mappa REUSE/ADAPT/BUILD dei repository open-source studiati |
 | [BUG_FIX_REGISTER.md](BUG_FIX_REGISTER.md) | Bug, cause, fix e regressioni |
 | [TECHNICAL_DEBT_AND_OPTIMIZATIONS.md](TECHNICAL_DEBT_AND_OPTIMIZATIONS.md) | Debito tecnico e ottimizzazioni candidate |
 | [VERSION_HISTORY.md](VERSION_HISTORY.md) | Evoluzione sistema/documentazione |
@@ -56,15 +59,20 @@ flowchart TB
     FEAT --> EVID[Analisi post-hoc / Evidence]
     EVID -. eventuale futuro .-> SHADOW[Shadow validation]
     SHADOW -. solo dopo approvazione .-> PROD[Production candidate]
+    CORE -. candidato selezionato manualmente .-> TC[LAB-RESEARCH-001 Trade Committee]
+    TC --> VERDICT[APPROVE / WAIT / REJECT]
 ```
 
 `LAB-FEAT-001` non è una nuova strategia: arricchisce passivamente i segnali già esistenti. `PROD-001`, cioè l'uso decisionale delle feature TradingView in Production, resta **FROZEN**.
+
+`LAB-RESEARCH-001 Trade Committee` è un modulo manuale read-only: può contraddire il CORE ma non modifica segnali e non esegue ordini.
 
 ## CORE / LABORATORY / PRODUCTION
 
 **CORE** decide: screening, scoring, entry, trigger, R/R, sizing e guardrail.  
 **LABORATORY** misura: paper trading, evidence, varianti e feature candidate senza alterare il CORE.  
-**PRODUCTION** esegue il sistema reale: workflow, provider, persistenza, notifiche e dashboard.
+**PRODUCTION** esegue il sistema reale: workflow, provider, persistenza, notifiche e dashboard.  
+**TRADE COMMITTEE** verifica manualmente un candidato prima dell'acquisto reale usando fonti e check indipendenti dal ranking CORE.
 
 Un Laboratory tecnicamente sano non implica che una strategia sia statisticamente valida: `ENGINE HEALTH` e `STRATEGY EVIDENCE` restano concetti separati.
 

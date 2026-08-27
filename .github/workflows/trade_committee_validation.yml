@@ -7,8 +7,10 @@ on:
       - 'pages/5_Trade_Committee.py'
       - 'dashboard/pages/5_Trade_Committee.py'
       - 'tests/test_trade_committee*.py'
-      - 'supabase/migrations/*trade_committee*.sql'
+      - 'tests/fixtures/**'
+      - 'requirements.txt'
       - 'docs/TRADE_COMMITTEE.md'
+      - 'docs/research/TRADE_COMMITTEE_*.md'
   workflow_dispatch:
 
 permissions:
@@ -25,6 +27,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Trade Committee tests
-        run: pytest -q tests/test_trade_committee.py tests/test_trade_committee_persistence.py
+        run: pytest -q tests/test_trade_committee*.py
       - name: Compile Trade Committee modules
         run: python -m py_compile trade_committee/*.py pages/5_Trade_Committee.py dashboard/pages/5_Trade_Committee.py
