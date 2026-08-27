@@ -9,6 +9,7 @@ from fineco_alert_bridge.whatsapp import send_callmebot
 IMAP_HOST = os.getenv("FINECO_IMAP_HOST", "imap.gmail.com")
 FINECO_SENDER = os.getenv("FINECO_SENDER", "service@finecobank.com")
 FINECO_SUBJECT = os.getenv("FINECO_SUBJECT", "Alert da FinecoBank")
+FINECO_LABEL = os.getenv("FINECO_LABEL", "BANCHE")
 
 
 def _decode_subject(msg) -> str:
@@ -32,24 +33,33 @@ def _extract_text(msg) -> str:
     return payload.decode(charset, errors="replace")
 
 
-def _select_all_mail(mail: imaplib.IMAP4_SSL) -> str:
-    """Seleziona Tutti i messaggi, così intercettiamo anche alert filtrati fuori da INBOX."""
+def _select_mailbox(mail: imaplib.IMAP4_SSL) -> str:
+    """Preferisce l'etichetta BANCHE; fallback su Tutti i messaggi."""
     status, boxes = mail.list()
-    if status == "OK":
-        for raw in boxes or []:
-            line = raw.decode("utf-8", errors="replace")
-            if "\\All" in line:
-                # Il nome mailbox è normalmente l'ultimo token; può contenere spazi ed essere quotato.
-                mailbox = line.split('"/"')[-1].strip() if '"/"' in line else line.split()[-1]
-                status, _ = mail.select(mailbox)
-                if status == "OK":
-                    return mailbox
-    # Fallback per Gmail in lingua inglese.
+    decoded = [raw.decode("utf-8", errors="replace") for raw in (boxes or [])] if status == "OK" else []
+
+    # Prima prova l'etichetta configurata (es. BANCHE), anche se Gmail la espone con virgolette.
+    for line in decoded:
+        if FINECO_LABEL.lower() in line.lower():
+            mailbox = line.split('"/"')[-1].strip() if '"/"' in line else line.split()[-1]
+            status, _ = mail.select(mailbox)
+            if status == "OK":
+                return mailbox
+
+    # Poi usa la cartella speciale All Mail, così non dipendiamo da INBOX.
+    for line in decoded:
+        if "\\All" in line:
+            mailbox = line.split('"/"')[-1].strip() if '"/"' in line else line.split()[-1]
+            status, _ = mail.select(mailbox)
+            if status == "OK":
+                return mailbox
+
     for mailbox in ('"[Gmail]/All Mail"', '"[Google Mail]/All Mail"'):
         status, _ = mail.select(mailbox)
         if status == "OK":
             return mailbox
-    raise RuntimeError("Impossibile selezionare la cartella Gmail Tutti i messaggi / All Mail")
+
+    raise RuntimeError("Impossibile selezionare l'etichetta BANCHE o Tutti i messaggi")
 
 
 def process_unread_alerts() -> int:
@@ -60,7 +70,7 @@ def process_unread_alerts() -> int:
     mail = imaplib.IMAP4_SSL(IMAP_HOST)
     try:
         mail.login(gmail_user, gmail_password)
-        mailbox = _select_all_mail(mail)
+        mailbox = _select_mailbox(mail)
         print(f"Mailbox selezionata: {mailbox}")
         status, data = mail.search(None, "UNSEEN", "FROM", f'"{FINECO_SENDER}"')
         if status != "OK":
@@ -87,7 +97,6 @@ def process_unread_alerts() -> int:
                 continue
 
             send_callmebot(format_whatsapp(alert))
-            # Segna come letta solo dopo invio WhatsApp riuscito: deduplica semplice e robusta.
             mail.store(msg_id, "+FLAGS", "\\Seen")
             processed += 1
             print(f"SENT {alert.titolo} {alert.mercato} {alert.prezzo}")
