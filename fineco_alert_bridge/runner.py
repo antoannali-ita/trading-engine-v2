@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import email
 import imaplib
+import json
 import os
 import time
+from datetime import datetime, timezone
 from email.header import decode_header, make_header
+from urllib.request import Request, urlopen
 
 from fineco_alert_bridge.parser import format_whatsapp, parse_fineco_alert
 from fineco_alert_bridge.tradingview import fetch_tradingview_data
@@ -65,7 +68,6 @@ def _select_mailbox(mail: imaplib.IMAP4_SSL) -> str:
 
 
 def _fetch_without_marking_seen(mail: imaplib.IMAP4_SSL, msg_id: bytes):
-    """Fetch the full message without consuming the UNSEEN checkpoint."""
     status, raw_data = mail.fetch(msg_id, "(BODY.PEEK[])")
     if status != "OK" or not raw_data or not isinstance(raw_data[0], tuple):
         raise RuntimeError(f"IMAP fetch PEEK fallito per msg_id={msg_id.decode(errors='replace')}")
@@ -73,7 +75,6 @@ def _fetch_without_marking_seen(mail: imaplib.IMAP4_SSL, msg_id: bytes):
 
 
 def _mark_seen(mail: imaplib.IMAP4_SSL, msg_id: bytes, attempts: int = 3) -> None:
-    """Commit the Gmail checkpoint only after provider acceptance."""
     for attempt in range(1, attempts + 1):
         status, _ = mail.store(msg_id, "+FLAGS", "\\Seen")
         if status == "OK":
@@ -82,6 +83,53 @@ def _mark_seen(mail: imaplib.IMAP4_SSL, msg_id: bytes, attempts: int = 3) -> Non
             print(f"MAIL_SEEN_RETRY attempt={attempt}/{attempts}")
             time.sleep(1)
     raise RuntimeError(f"Impossibile marcare come letta la mail {msg_id.decode(errors='replace')}")
+
+
+def _record_fineco_notification(alert, provider_status: str) -> None:
+    """Best-effort registry write used by Alert Center deduplication.
+
+    Fineco must keep working even if Supabase is unavailable, so registry failures are logged
+    but never turn a successfully accepted WhatsApp back into a failed Fineco delivery.
+    """
+    base = (os.getenv("SUPABASE_URL") or "").rstrip("/")
+    key = (os.getenv("SUPABASE_SECRET_KEY") or "").strip()
+    if not base or not key:
+        print("NOTIFICATION_REGISTRY_SKIPPED Fineco: Supabase non configurato")
+        return
+
+    payload = {
+        "ticker": str(alert.titolo).upper(),
+        "event_type": "FINECO_PRICE_ALERT",
+        "channel": "WHATSAPP",
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+        "status": "SENT",
+        "provider": "CALLMEBOT",
+        "payload": {
+            "source": "FINECO",
+            "market": str(alert.mercato).upper(),
+            "fineco_price": float(alert.prezzo),
+            "trigger_level": float(alert.prezzo),
+            "provider_status": provider_status,
+        },
+    }
+    req = Request(
+        f"{base}/rest/v1/notification_events",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=15) as response:
+            if response.status >= 400:
+                raise RuntimeError(f"Supabase HTTP {response.status}")
+        print(f"NOTIFICATION_REGISTRY_OK {alert.titolo} source=FINECO")
+    except Exception as exc:
+        print(f"NOTIFICATION_REGISTRY_ERROR {alert.titolo}: {type(exc).__name__}: {exc}")
 
 
 def process_unread_alerts() -> int:
@@ -105,8 +153,6 @@ def process_unread_alerts() -> int:
         for msg_id in msg_ids:
             msg_label = msg_id.decode(errors="replace")
             try:
-                # RFC822 può impostare \\Seen in IMAP. BODY.PEEK[] mantiene invece
-                # la mail UNSEEN finché WhatsApp non è stato accettato dal provider.
                 raw_email = _fetch_without_marking_seen(mail, msg_id)
                 msg = email.message_from_bytes(raw_email)
                 subject = _decode_subject(msg)
@@ -123,7 +169,6 @@ def process_unread_alerts() -> int:
 
                 print(f"FINECO_MAIL_FOUND {alert.titolo} {alert.mercato} {alert.prezzo}")
 
-                # TradingView viene interrogato SOLO quando esiste un nuovo alert Fineco valido.
                 tv = None
                 try:
                     print(f"TRADINGVIEW_LOOKUP {alert.titolo} | {alert.mercato}")
@@ -138,19 +183,16 @@ def process_unread_alerts() -> int:
                 except Exception as exc:
                     print(f"TRADINGVIEW_ERROR {type(exc).__name__}: {exc}")
 
-                # Il checkpoint Gmail viene committato SOLO dopo che CallMeBot
-                # ha esplicitamente accettato il messaggio.
                 print(f"WHATSAPP_REQUEST_SENT {alert.titolo}")
                 provider_status = send_callmebot(format_whatsapp(alert, tv))
                 print(f"WHATSAPP_CONFIRMED {alert.titolo} status={provider_status}")
+                _record_fineco_notification(alert, provider_status)
 
                 _mark_seen(mail, msg_id)
                 print(f"MAIL_MARKED_SEEN {alert.titolo}")
                 processed += 1
                 print(f"DONE {alert.titolo} {alert.mercato} {alert.prezzo}")
             except Exception as exc:
-                # BODY.PEEK[] ensures that failed messages remain UNSEEN and are
-                # automatically eligible for the next scheduled retry.
                 print(f"ALERT_FAILED msg_id={msg_label} reason={type(exc).__name__}: {exc}")
                 print(f"MAIL_LEFT_UNREAD msg_id={msg_label}")
                 failures.append(f"{msg_label}:{type(exc).__name__}")
