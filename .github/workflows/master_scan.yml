@@ -54,6 +54,11 @@ jobs:
             exit 1
           fi
           echo "market=$MARKET" >> "$GITHUB_OUTPUT"
+      - name: Heartbeat start
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log start --module MASTER_SCAN --component "${{ steps.market.outputs.market }}" --market "${{ steps.market.outputs.market }}"
       - name: Run Master Scan
         env:
           GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
@@ -69,3 +74,9 @@ jobs:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: python -m monitor.master_scan --market "${{ steps.market.outputs.market }}"
+      - name: Heartbeat finish
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log finish --module MASTER_SCAN --component "${{ steps.market.outputs.market }}" --market "${{ steps.market.outputs.market }}" --status "${{ job.status }}"
