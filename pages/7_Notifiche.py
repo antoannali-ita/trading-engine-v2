@@ -175,10 +175,8 @@ with tab_new:
                 key="confirm_bulk_insert",
             ):
                 inserted = insert_alerts(validated)
-                st.success(f"Inseriti {inserted} alert nel database.")
                 st.session_state.pop("alert_parse_result", None)
-                st.session_state["alert_assistant_text"] = ""
-                st.rerun()
+                st.success(f"Inseriti {inserted} alert nel database. La casella resta compilata così puoi verificare cosa hai appena inviato.")
 
     st.divider()
     st.subheader("Inserimento manuale")
