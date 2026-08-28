@@ -1,0 +1,56 @@
+name: One-off Notification Transport Test
+
+on:
+  push:
+    paths:
+      - '.github/workflows/test_notifications_once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test-notifications:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Send test email and WhatsApp
+        env:
+          GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
+          GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
+          GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
+          WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+        run: |
+          python - <<'PY'
+          import os, smtplib, ssl, urllib.parse, urllib.request
+          from email.mime.text import MIMEText
+
+          sender = os.environ['GMAIL_SENDER']
+          recipient = os.environ['GMAIL_RECIPIENT']
+          password = os.environ['GMAIL_PASSWORD']
+          msg = MIMEText('TEST Trading Engine: canale email operativo. Test 29/08/2026.', 'plain', 'utf-8')
+          msg['Subject'] = 'TEST Trading Engine | Email transport'
+          msg['From'] = sender
+          msg['To'] = recipient
+          with smtplib.SMTP('smtp.gmail.com', 587, timeout=30) as s:
+              s.ehlo(); s.starttls(context=ssl.create_default_context()); s.ehlo()
+              s.login(sender, password)
+              s.sendmail(sender, [recipient], msg.as_string())
+          print('EMAIL_TEST_SENT')
+
+          number = os.environ['WHATSAPP_NUMBER']
+          apikey = os.environ['CALLMEBOT_APIKEY']
+          text = 'TEST Trading Engine: canale WhatsApp operativo. Test 29/08/2026.'
+          qs = urllib.parse.urlencode({'phone': number, 'text': text, 'apikey': apikey})
+          req = urllib.request.Request('https://api.callmebot.com/whatsapp.php?' + qs, headers={'User-Agent':'trading-engine-v2-test'})
+          with urllib.request.urlopen(req, timeout=30) as r:
+              body = r.read().decode('utf-8', errors='replace')
+              print('WHATSAPP_HTTP', r.status)
+              print('WHATSAPP_RESPONSE', body[:300])
+              if r.status != 200:
+                  raise RuntimeError(f'CallMeBot HTTP {r.status}')
+          PY
