@@ -8,10 +8,11 @@ import streamlit as st
 
 from alert_center.alert_parser import parse_alert_text, validate_parsed_alerts
 from dashboard.data_access import get_client, notifications, safe_table_rows, utc_label
+from system_health.dashboard import render_run_ledger, render_system_status
 
 st.set_page_config(page_title="Alert Center", page_icon="🔔", layout="wide")
 st.title("🔔 Alert Center")
-st.caption("Alert prezzo indipendenti dal resto del motore. Notifiche operative: solo WhatsApp. Fineco continua a essere letto dalla mail come prima.")
+st.caption("Alert prezzo, notifiche e stato operativo dei processi in un unico centro di controllo.")
 
 
 def extract_message(payload):
@@ -68,7 +69,13 @@ def insert_alerts(rows: list[dict]) -> int:
     return len(payloads)
 
 
-tab_active, tab_new, tab_history = st.tabs(["🎯 Alert", "➕ Nuovo alert", "📨 Storico WhatsApp"])
+tab_active, tab_new, tab_history, tab_status, tab_runs = st.tabs([
+    "🎯 Alert",
+    "➕ Nuovo alert",
+    "📨 Storico notifiche",
+    "📡 Stato sistema",
+    "⚙️ Run & Heartbeat",
+])
 
 with tab_active:
     rows = alert_rows()
@@ -243,3 +250,9 @@ with tab_history:
                 frame[col] = frame[col].map(utc_label)
         wanted = ["sent_at", "ticker", "event_type", "channel", "status", "provider", "Messaggio", "error_message"]
         st.dataframe(frame[[c for c in wanted if c in frame.columns]], hide_index=True, use_container_width=True)
+
+with tab_status:
+    render_system_status()
+
+with tab_runs:
+    render_run_ledger()
