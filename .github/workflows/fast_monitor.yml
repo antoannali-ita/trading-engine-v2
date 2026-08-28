@@ -44,6 +44,11 @@ jobs:
             v2-core-runtime-${{ runner.os }}-
             v2-parity-${{ runner.os }}-
             v2-fast-italy-${{ runner.os }}-
+      - name: Heartbeat start
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log start --module FAST_MONITOR_ITALY --component italy --market ITALY
       - name: Run Fast Monitor ITALY
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -56,6 +61,12 @@ jobs:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: python -m monitor.fast_monitor --market italy
+      - name: Heartbeat finish
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log finish --module FAST_MONITOR_ITALY --component italy --market ITALY --status "${{ job.status }}"
 
   usa:
     name: Fast Monitor USA
@@ -77,6 +88,11 @@ jobs:
             v2-core-runtime-${{ runner.os }}-
             v2-parity-${{ runner.os }}-
             v2-fast-usa-${{ runner.os }}-
+      - name: Heartbeat start
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log start --module FAST_MONITOR_USA --component usa --market USA
       - name: Run Fast Monitor USA
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -89,3 +105,9 @@ jobs:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: python -m monitor.fast_monitor --market usa
+      - name: Heartbeat finish
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log finish --module FAST_MONITOR_USA --component usa --market USA --status "${{ job.status }}"
