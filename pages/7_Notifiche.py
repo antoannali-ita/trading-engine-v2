@@ -6,6 +6,7 @@ from datetime import date, datetime, time, timedelta, timezone
 import pandas as pd
 import streamlit as st
 
+from alert_center.alert_parser import parse_alert_text, validate_parsed_alerts
 from dashboard.data_access import get_client, notifications, safe_table_rows, utc_label
 
 st.set_page_config(page_title="Alert Center", page_icon="🔔", layout="wide")
@@ -42,6 +43,29 @@ def alert_rows():
 
 def refresh():
     st.rerun()
+
+
+def insert_alerts(rows: list[dict]) -> int:
+    payloads = []
+    for row in rows:
+        if row.get("validation") != "OK":
+            continue
+        payloads.append({
+            "ticker": row["ticker"],
+            "market": row.get("market") or "USA",
+            "condition_type": row["condition_type"],
+            "trigger_level": row["trigger_level"],
+            "status": "ACTIVE",
+            "source": "CHAT",
+            "note": row.get("note") or "Creato da Alert Assistant",
+            "expires_at": row["expires_at"],
+            "repeatable": False,
+            "dedup_minutes": 180,
+        })
+    if not payloads:
+        return 0
+    get_client().table("trading_alerts").insert(payloads).execute()
+    return len(payloads)
 
 
 tab_active, tab_new, tab_history = st.tabs(["🎯 Alert", "➕ Nuovo alert", "📨 Storico WhatsApp"])
@@ -94,7 +118,68 @@ with tab_active:
             refresh()
 
 with tab_new:
-    st.subheader("Inserimento rapido")
+    st.subheader("🤖 Alert Assistant")
+    st.caption("Incolla uno o più alert. Il parser locale prova prima senza API, crea una preview e inserisce solo dopo conferma.")
+
+    default_example = "MSFT sopra 525 fino al 15/09\nSPGI sopra 445 e sotto 425 fino al 25/09\nNVO sopra 48,2 fino al 15 settembre"
+    assistant_text = st.text_area(
+        "Scrivi o incolla gli alert",
+        placeholder=default_example,
+        height=140,
+        key="alert_assistant_text",
+    )
+
+    parse_clicked = st.button("🔎 Analizza alert", type="primary", use_container_width=True)
+    if parse_clicked:
+        result = parse_alert_text(assistant_text)
+        st.session_state["alert_parse_result"] = result
+
+    result = st.session_state.get("alert_parse_result")
+    if result is not None:
+        if result.status == "HIGH_CONFIDENCE":
+            st.success(f"Parser locale: alta confidenza. Riconosciuti {len(result.alerts)} alert.")
+        elif result.status == "PARTIAL":
+            st.warning(f"Parser locale: risultato parziale. Riconosciuti {len(result.alerts)} alert, ma ci sono parti da controllare.")
+        else:
+            st.error("Parser locale: confidenza bassa. Nessun inserimento automatico.")
+
+        if result.errors:
+            with st.expander("Dettagli da controllare", expanded=True):
+                for err in result.errors:
+                    st.write(f"• {err}")
+                if result.needs_llm:
+                    st.info("Fallback LLM previsto ma non attivo in V1: il sistema non inventa ticker, livelli o date mancanti.")
+
+        if result.alerts:
+            validated = validate_parsed_alerts(result.alerts, alert_rows())
+            preview = pd.DataFrame(validated)
+            preview["Condizione"] = preview["condition_type"].map({"PRICE_ABOVE": ">=", "PRICE_BELOW": "<="})
+            preview["Scadenza"] = preview["expires_at"].astype(str).str.slice(0, 10)
+            show = preview[["ticker", "Condizione", "trigger_level", "Scadenza", "validation"]].rename(columns={
+                "ticker": "Ticker",
+                "trigger_level": "Livello",
+                "validation": "Validazione",
+            })
+            st.markdown("**Ho interpretato così:**")
+            st.dataframe(show, hide_index=True, use_container_width=True)
+
+            insertable = [row for row in validated if row["validation"] == "OK"]
+            duplicates = [row for row in validated if row["validation"] == "DUPLICATE"]
+            if duplicates:
+                st.info(f"{len(duplicates)} alert già presenti: non verranno duplicati.")
+
+            if st.button(
+                f"✅ Inserisci {len(insertable)} alert",
+                disabled=not insertable,
+                use_container_width=True,
+                key="confirm_bulk_insert",
+            ):
+                inserted = insert_alerts(validated)
+                st.session_state.pop("alert_parse_result", None)
+                st.success(f"Inseriti {inserted} alert nel database. La casella resta compilata così puoi verificare cosa hai appena inviato.")
+
+    st.divider()
+    st.subheader("Inserimento manuale")
     st.caption("Il prezzo attuale viene letto automaticamente dal motore. Tu imposti soltanto la condizione e il livello.")
     with st.form("new_alert", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
