@@ -21,3 +21,10 @@ score_marginal_gap: 2
 db_path: data/trading_forward_test.db
 snapshot_dir: data/snapshots
 prebuy_enabled: true
+
+# Pre-ranking research layer. It narrows the pool but never overrides CORE
+# decision/entry/stop/targets/RR/sizing. Missing revisions remain N/D.
+factor_ranker_enabled: true
+factor_ranker_pool_size: 40
+factor_ranker_revisions_enabled: true
+factor_ranker_revision_top_n: 20
