@@ -2,23 +2,32 @@ name: Fineco WhatsApp Alerts
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/fineco_whatsapp_alerts.yml"
+  workflow_run:
+    workflows:
+      - "Fast Monitor v2"
+      - "Trading Engine V2 Orchestrator"
+    types: [completed]
   schedule:
-    # GitHub cron usa UTC. La finestra 06:00-22:50 UTC copre 08:00-23:00
-    # in ora legale italiana e resta sufficientemente ampia in ora solare.
-    # Il controllo Europe/Rome sotto evita elaborazioni fuori fascia.
-    - cron: "*/10 6-22 * * 1-5"
+    # Cron primario, spostato dai minuti tondi per ridurre la congestione GitHub.
+    # Il workflow_run sopra e' un secondo canale di wake-up: non modifica i workflow
+    # sorgente, si limita ad ascoltarne il completamento.
+    - cron: "7,17,27,37,47,57 6-22 * * 1-5"
 
 permissions:
   contents: read
 
-# Una sola lettura IMAP alla volta. Evita che due runner vedano la stessa mail
-# UNSEEN e tentino di inviare due WhatsApp identici.
+# Una sola lettura IMAP alla volta. Se cron e workflow_run coincidono,
+# il secondo run attende e BODY.PEEK/Seen impedisce doppi invii.
 concurrency:
   group: fineco-whatsapp-alerts
   cancel-in-progress: false
 
 jobs:
   fineco-alerts:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
@@ -37,21 +46,21 @@ jobs:
           fi
 
       - name: Checkout
-        if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
         uses: actions/checkout@v4
 
       - name: Set up Python
-        if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install Fineco bridge dependencies
-        if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
         run: python -m pip install --disable-pip-version-check "tradingview-screener>=3.0"
 
       - name: Read Fineco alerts, enrich with TradingView and send WhatsApp
-        if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
         env:
           GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
