@@ -22,6 +22,11 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
       - run: pip install -r requirements.txt
+      - name: Heartbeat start
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log start --module ORCHESTRATOR --component coordinator
       - name: Run orchestration cycle
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -34,3 +39,9 @@ jobs:
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
           TRIGGER_SOURCE: ORCHESTRATOR
         run: python -m orchestrator.coordinator
+      - name: Heartbeat finish
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log finish --module ORCHESTRATOR --component coordinator --status "${{ job.status }}"
