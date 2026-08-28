@@ -57,6 +57,8 @@ jobs:
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
           WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           FINECO_SENDER: service@finecobank.com
           FINECO_SUBJECT: Alert da FinecoBank
           FINECO_LABEL: BANCHE

@@ -1,0 +1,33 @@
+name: Alert Center
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 6-22 * * 1-5"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alert-center
+  cancel-in-progress: false
+
+jobs:
+  check-alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Check Alert Center rules and send WhatsApp only
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+        run: python -m alert_center.runner
