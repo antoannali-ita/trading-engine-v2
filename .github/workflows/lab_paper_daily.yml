@@ -42,6 +42,8 @@ jobs:
       - run: pytest -q tests
       - name: Generate Lab V2 opportunities and paper lifecycle
         run: python jobs/run_paper_signals_v2.py
+      - name: Verify stale watchlist cleanup
+        run: python jobs/cleanup_watchlist_stale.py
       - name: Enrich V2 metadata, risk identity and Fineco cost scenarios
         run: python jobs/enrich_lab_metadata.py
       - name: Update signal outcomes D1-D60 MFE MAE
