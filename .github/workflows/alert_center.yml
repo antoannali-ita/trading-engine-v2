@@ -11,8 +11,6 @@ on:
       - "Trading Engine V2 Orchestrator"
     types: [completed]
   schedule:
-    # Cron primario ogni 5 minuti, sfalsato dai minuti piu' congestionati.
-    # workflow_run offre un wake-up ridondante senza modificare gli altri motori.
     - cron: "3,8,13,18,23,28,33,38,43,48,53,58 6-22 * * 1-5"
 
 permissions:
@@ -35,6 +33,11 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Heartbeat start
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log start --module ALERT_CENTER --component price-alerts
       - name: Check Alert Center rules and send WhatsApp only
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -42,3 +45,9 @@ jobs:
           WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
         run: python -m alert_center.runner
+      - name: Heartbeat finish
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log finish --module ALERT_CENTER --component price-alerts --status "${{ job.status }}"
