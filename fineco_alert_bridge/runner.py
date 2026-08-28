@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import email
 import imaplib
 import os
+import time
 from email.header import decode_header, make_header
 
 from fineco_alert_bridge.parser import format_whatsapp, parse_fineco_alert
@@ -61,11 +64,32 @@ def _select_mailbox(mail: imaplib.IMAP4_SSL) -> str:
     raise RuntimeError("Impossibile selezionare l'etichetta BANCHE o Tutti i messaggi")
 
 
+def _fetch_without_marking_seen(mail: imaplib.IMAP4_SSL, msg_id: bytes):
+    """Fetch the full message without consuming the UNSEEN checkpoint."""
+    status, raw_data = mail.fetch(msg_id, "(BODY.PEEK[])")
+    if status != "OK" or not raw_data or not isinstance(raw_data[0], tuple):
+        raise RuntimeError(f"IMAP fetch PEEK fallito per msg_id={msg_id.decode(errors='replace')}")
+    return raw_data[0][1]
+
+
+def _mark_seen(mail: imaplib.IMAP4_SSL, msg_id: bytes, attempts: int = 3) -> None:
+    """Commit the Gmail checkpoint only after provider acceptance."""
+    for attempt in range(1, attempts + 1):
+        status, _ = mail.store(msg_id, "+FLAGS", "\\Seen")
+        if status == "OK":
+            return
+        if attempt < attempts:
+            print(f"MAIL_SEEN_RETRY attempt={attempt}/{attempts}")
+            time.sleep(1)
+    raise RuntimeError(f"Impossibile marcare come letta la mail {msg_id.decode(errors='replace')}")
+
+
 def process_unread_alerts() -> int:
     gmail_user = os.environ["GMAIL_SENDER"]
     gmail_password = os.environ["GMAIL_PASSWORD"]
 
     processed = 0
+    failures: list[str] = []
     mail = imaplib.IMAP4_SSL(IMAP_HOST)
     try:
         mail.login(gmail_user, gmail_password)
@@ -79,50 +103,72 @@ def process_unread_alerts() -> int:
         print(f"Alert Fineco non letti trovati: {len(msg_ids)}")
 
         for msg_id in msg_ids:
-            status, raw_data = mail.fetch(msg_id, "(RFC822)")
-            if status != "OK":
-                continue
-            raw_email = raw_data[0][1]
-            msg = email.message_from_bytes(raw_email)
-            subject = _decode_subject(msg)
-            if FINECO_SUBJECT.lower() not in subject.lower():
-                print(f"SKIP {msg_id.decode()}: oggetto non Fineco ({subject})")
-                continue
-
-            text = _extract_text(msg)
-            alert = parse_fineco_alert(text)
-            if not alert:
-                print(f"SKIP {msg_id.decode()}: formato Fineco non riconosciuto")
-                continue
-
-            # TradingView viene interrogato SOLO quando esiste un nuovo alert Fineco valido.
-            tv = None
+            msg_label = msg_id.decode(errors="replace")
             try:
-                print(f"TradingView lookup: {alert.titolo} | {alert.mercato}")
-                tv = fetch_tradingview_data(alert)
-                if tv is None:
-                    print("TradingView: dati non disponibili, invio comunque alert Fineco")
-                else:
-                    print(
-                        f"TradingView OK: prezzo={tv.prezzo_attuale} "
-                        f"1H={tv.segnale_1h} 4H={tv.segnale_4h} 1D={tv.segnale_1d}"
-                    )
-            except Exception as exc:
-                print(f"TradingView ERROR: {type(exc).__name__}: {exc}")
+                # RFC822 può impostare \\Seen in IMAP. BODY.PEEK[] mantiene invece
+                # la mail UNSEEN finché WhatsApp non è stato accettato dal provider.
+                raw_email = _fetch_without_marking_seen(mail, msg_id)
+                msg = email.message_from_bytes(raw_email)
+                subject = _decode_subject(msg)
+                if FINECO_SUBJECT.lower() not in subject.lower():
+                    print(f"SKIP {msg_label}: oggetto non Fineco ({subject})")
+                    continue
 
-            # L'alert Fineco non viene perso se TradingView è temporaneamente indisponibile.
-            send_callmebot(format_whatsapp(alert, tv))
-            mail.store(msg_id, "+FLAGS", "\\Seen")
-            processed += 1
-            print(f"SENT {alert.titolo} {alert.mercato} {alert.prezzo}")
+                text = _extract_text(msg)
+                alert = parse_fineco_alert(text)
+                if not alert:
+                    print(f"PARSE_ERROR {msg_label}: formato Fineco non riconosciuto; mail lasciata UNSEEN")
+                    failures.append(f"{msg_label}:PARSE_ERROR")
+                    continue
+
+                print(f"FINECO_MAIL_FOUND {alert.titolo} {alert.mercato} {alert.prezzo}")
+
+                # TradingView viene interrogato SOLO quando esiste un nuovo alert Fineco valido.
+                tv = None
+                try:
+                    print(f"TRADINGVIEW_LOOKUP {alert.titolo} | {alert.mercato}")
+                    tv = fetch_tradingview_data(alert)
+                    if tv is None:
+                        print("TRADINGVIEW_ND: invio comunque alert Fineco")
+                    else:
+                        print(
+                            f"TRADINGVIEW_OK prezzo={tv.prezzo_attuale} "
+                            f"1H={tv.segnale_1h} 4H={tv.segnale_4h} 1D={tv.segnale_1d}"
+                        )
+                except Exception as exc:
+                    print(f"TRADINGVIEW_ERROR {type(exc).__name__}: {exc}")
+
+                # Il checkpoint Gmail viene committato SOLO dopo che CallMeBot
+                # ha esplicitamente accettato il messaggio.
+                print(f"WHATSAPP_REQUEST_SENT {alert.titolo}")
+                provider_status = send_callmebot(format_whatsapp(alert, tv))
+                print(f"WHATSAPP_CONFIRMED {alert.titolo} status={provider_status}")
+
+                _mark_seen(mail, msg_id)
+                print(f"MAIL_MARKED_SEEN {alert.titolo}")
+                processed += 1
+                print(f"DONE {alert.titolo} {alert.mercato} {alert.prezzo}")
+            except Exception as exc:
+                # BODY.PEEK[] ensures that failed messages remain UNSEEN and are
+                # automatically eligible for the next scheduled retry.
+                print(f"ALERT_FAILED msg_id={msg_label} reason={type(exc).__name__}: {exc}")
+                print(f"MAIL_LEFT_UNREAD msg_id={msg_label}")
+                failures.append(f"{msg_label}:{type(exc).__name__}")
+
+        if failures:
+            raise RuntimeError(
+                f"Fineco bridge completato con {len(failures)} alert falliti; "
+                "le mail restano UNSEEN per il retry successivo"
+            )
     finally:
         try:
             mail.logout()
         except Exception:
             pass
+
     return processed
 
 
 if __name__ == "__main__":
     count = process_unread_alerts()
-    print(f"Fineco alerts inviati: {count}")
+    print(f"Fineco alerts confermati: {count}")
