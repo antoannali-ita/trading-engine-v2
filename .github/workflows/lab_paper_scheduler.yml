@@ -52,6 +52,13 @@ jobs:
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: python jobs/run_paper_signals_v2.py
 
+      - name: Verify stale watchlist cleanup
+        working-directory: laboratory
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python jobs/cleanup_watchlist_stale.py
+
       - name: Enrich V2 metadata, risk identity and Fineco cost scenarios
         working-directory: laboratory
         env:
