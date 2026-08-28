@@ -11,16 +11,11 @@ on:
       - "Trading Engine V2 Orchestrator"
     types: [completed]
   schedule:
-    # Cron primario, spostato dai minuti tondi per ridurre la congestione GitHub.
-    # Il workflow_run sopra e' un secondo canale di wake-up: non modifica i workflow
-    # sorgente, si limita ad ascoltarne il completamento.
-    - cron: "7,17,27,37,47,57 6-22 * * 1-5"
+    - cron: "1,11,21,31,41,51 6-22 * * 1-5"
 
 permissions:
   contents: read
 
-# Una sola lettura IMAP alla volta. Se cron e workflow_run coincidono,
-# il secondo run attende e BODY.PEEK/Seen impedisce doppi invii.
 concurrency:
   group: fineco-whatsapp-alerts
   cancel-in-progress: false
@@ -59,6 +54,13 @@ jobs:
         if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
         run: python -m pip install --disable-pip-version-check "tradingview-screener>=3.0"
 
+      - name: Heartbeat start
+        if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log start --module FINECO_BRIDGE --component gmail-tradingview-whatsapp
+
       - name: Read Fineco alerts, enrich with TradingView and send WhatsApp
         if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
         env:
@@ -72,3 +74,10 @@ jobs:
           FINECO_SUBJECT: Alert da FinecoBank
           FINECO_LABEL: BANCHE
         run: python -m fineco_alert_bridge.runner
+
+      - name: Heartbeat finish
+        if: always() && (steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log finish --module FINECO_BRIDGE --component gmail-tradingview-whatsapp --status "${{ job.status }}"
