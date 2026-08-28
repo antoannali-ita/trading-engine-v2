@@ -3,6 +3,7 @@ import importlib, os
 from typing import Any, Dict, List, Tuple
 from engine.models import AnalysisResult
 from engine.market_rules import presentation_state, prebuy_enabled
+from engine.factor_ranker import rank_candidates
 from market.session import status as market_session_status
 
 ENV_MAP = {
@@ -103,9 +104,20 @@ def run_full_scan(cfg: Dict[str, Any], persist: bool=True) -> Dict[str, Any]:
     regime.update(history)
     df, removed=reference.run_tradingview_discovery()
     if df.empty:
-        return {"market":cfg["market"],"skipped":False,"regime":regime,"selected":[],"candidates":[],"rejected":[],"removed_fields":removed,"dropped":[]}
+        return {"market":cfg["market"],"skipped":False,"regime":regime,"selected":[],"candidates":[],"rejected":[],"removed_fields":removed,"dropped":[],"factor_ranker":{"enabled":bool(cfg.get("factor_ranker_enabled",False)),"pool_size":0,"revision_enriched":0}}
+
     candidates=reference.build_candidates(df, regime)
-    selected,rejected=reference.select_ranked(candidates)
+
+    # Factor Ranker is a research pre-selector, not a fourth trading engine.
+    # It improves candidate quality using momentum/RS, quality/profitability,
+    # growth and estimate revisions. Existing CORE decisions, trade plan, R/R,
+    # sizing and vetoes remain authoritative and are not recalculated here.
+    factor_result = rank_candidates(candidates, cfg)
+    candidates = factor_result["candidates"]
+    selection_pool = factor_result["selection_pool"]
+    selected, _ = reference.select_ranked(selection_pool)
+    rejected = [c for c in candidates if not c.get("passes_survival")]
+
     actionable=[c for c in selected if c.get("decision") in {"BUY_NOW","BUY_LIMIT"}]
     if len(actionable)>regime["max_new_buys"]:
         allowed={c["ticker"] for c in actionable[:regime["max_new_buys"]]}
@@ -120,7 +132,26 @@ def run_full_scan(cfg: Dict[str, Any], persist: bool=True) -> Dict[str, Any]:
         from datetime import datetime, timezone
         run_id=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         json_path=str(reference.save_run(run_id,regime,candidates,selected,removed,dropped))
-    return {"market":cfg["market"],"skipped":False,"reference":reference,"regime":regime,"selected":selected,"candidates":candidates,"rejected":rejected,"removed_fields":removed,"dropped":dropped,"run_id":run_id,"json_path":json_path}
+    return {
+        "market":cfg["market"],
+        "skipped":False,
+        "reference":reference,
+        "regime":regime,
+        "selected":selected,
+        "candidates":candidates,
+        "rejected":rejected,
+        "removed_fields":removed,
+        "dropped":dropped,
+        "run_id":run_id,
+        "json_path":json_path,
+        "factor_ranker":{
+            "enabled":factor_result.get("enabled",False),
+            "version":factor_result.get("version"),
+            "pool_size":factor_result.get("pool_size",len(selection_pool)),
+            "eligible_count":factor_result.get("eligible_count"),
+            "revision_enriched":factor_result.get("revision_enriched",0),
+        },
+    }
 
 def analyze_ticker_from_candidate(cfg: Dict[str,Any], candidate: Dict[str,Any]) -> AnalysisResult:
     reference=load_reference(cfg)
