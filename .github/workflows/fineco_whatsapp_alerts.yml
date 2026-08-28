@@ -11,6 +11,12 @@ on:
 permissions:
   contents: read
 
+# Una sola lettura IMAP alla volta. Evita che due runner vedano la stessa mail
+# UNSEEN e tentino di inviare due WhatsApp identici.
+concurrency:
+  group: fineco-whatsapp-alerts
+  cancel-in-progress: false
+
 jobs:
   fineco-alerts:
     runs-on: ubuntu-latest
