@@ -37,9 +37,21 @@ jobs:
         working-directory: laboratory
         run: pip install -r requirements.txt
 
+      - name: Laboratory heartbeat start
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log start --module LAB_PAPER --component daily-opportunity-feed
+
       - name: Unit tests
         working-directory: laboratory
         run: pytest -q tests
+
+      - name: Dynamic Exit heartbeat start
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log start --module DYNAMIC_EXIT --component recalibration
 
       - name: Recalibrate dynamic exits for active paper positions
         working-directory: laboratory
@@ -48,6 +60,13 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: python jobs/run_dynamic_exit.py
+
+      - name: Dynamic Exit heartbeat finish
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log finish --module DYNAMIC_EXIT --component recalibration --status "${{ job.status }}"
 
       - name: Generate opportunity ladder and paper feed
         working-directory: laboratory
@@ -97,3 +116,10 @@ jobs:
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: python jobs/build_strategy_snapshots.py
+
+      - name: Laboratory heartbeat finish
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m system_health.run_log finish --module LAB_PAPER --component daily-opportunity-feed --status "${{ job.status }}"
