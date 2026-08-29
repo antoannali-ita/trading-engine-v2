@@ -34,7 +34,7 @@ jobs:
         with:
           ref: strategy-lab-v1
       - name: Start Laboratory heartbeat
-        run: python ../system_health/run_log.py start --module LABORATORY --component PAPER_V2_MANUAL --workflow "${{ github.workflow }}" --message "Strategy Lab V2 manual feed started"
+        run: python ../system_health/run_log.py start --module LAB_PAPER --component daily-opportunity-feed --workflow "${{ github.workflow }}" --message "Strategy Lab V2 manual feed started"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -58,4 +58,4 @@ jobs:
         run: python jobs/build_strategy_snapshots.py
       - name: Finish Laboratory heartbeat
         if: always()
-        run: python ../system_health/run_log.py finish --module LABORATORY --component PAPER_V2_MANUAL --workflow "${{ github.workflow }}" --status "${{ job.status }}" --message "Strategy Lab V2 manual feed finished"
+        run: python ../system_health/run_log.py finish --module LAB_PAPER --component daily-opportunity-feed --workflow "${{ github.workflow }}" --status "${{ job.status }}" --message "Strategy Lab V2 manual feed finished"
