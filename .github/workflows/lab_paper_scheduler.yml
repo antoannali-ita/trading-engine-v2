@@ -24,6 +24,12 @@ jobs:
         with:
           ref: strategy-lab-v1
 
+      - name: Start Laboratory heartbeat
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python system_health/run_log.py start --module LABORATORY --component PAPER_V2 --workflow "${{ github.workflow }}" --message "Strategy Lab V2 daily feed started"
+
       - name: Python
         uses: actions/setup-python@v5
         with:
@@ -87,3 +93,10 @@ jobs:
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: python jobs/build_strategy_snapshots.py
+
+      - name: Finish Laboratory heartbeat
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python system_health/run_log.py finish --module LABORATORY --component PAPER_V2 --workflow "${{ github.workflow }}" --status "${{ job.status }}" --message "Strategy Lab V2 daily feed finished"
