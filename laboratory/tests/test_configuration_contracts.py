@@ -35,10 +35,11 @@ def test_v2_scheduler_builds_dashboard_snapshots_after_feed():
     assert "python jobs/build_strategy_snapshots.py" in workflow
 
 
-def test_v2_scheduler_records_heartbeat_start_and_finish():
+def test_v2_scheduler_records_canonical_heartbeat_start_and_finish():
     workflow = _text(".github/workflows/lab_paper_scheduler.yml")
-    assert "system_health/run_log.py start --module LABORATORY --component PAPER_V2" in workflow
-    assert "system_health/run_log.py finish --module LABORATORY --component PAPER_V2" in workflow
+    identity = "--module LAB_PAPER --component daily-opportunity-feed"
+    assert f"system_health/run_log.py start {identity}" in workflow
+    assert f"system_health/run_log.py finish {identity}" in workflow
     assert "if: always()" in workflow
     assert '--status "${{ job.status }}"' in workflow
 
@@ -62,9 +63,10 @@ def test_legacy_manual_workflow_matches_v2_operational_pipeline():
     assert "python jobs/build_strategy_snapshots.py" in workflow
 
 
-def test_legacy_manual_workflow_records_heartbeat_start_and_finish():
+def test_legacy_manual_workflow_records_canonical_heartbeat_start_and_finish():
     workflow = _text(".github/workflows/lab_paper_daily.yml")
-    assert "system_health/run_log.py start --module LABORATORY --component PAPER_V2_MANUAL" in workflow
-    assert "system_health/run_log.py finish --module LABORATORY --component PAPER_V2_MANUAL" in workflow
+    identity = "--module LAB_PAPER --component daily-opportunity-feed"
+    assert f"system_health/run_log.py start {identity}" in workflow
+    assert f"system_health/run_log.py finish {identity}" in workflow
     assert "if: always()" in workflow
     assert '--status "${{ job.status }}"' in workflow
