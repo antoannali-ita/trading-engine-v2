@@ -71,7 +71,7 @@ def insert_alerts(rows: list[dict]) -> int:
 
 tab_active, tab_new, tab_history, tab_status, tab_runs = st.tabs([
     "🎯 Alert",
-    "➕ Nuovo alert",
+    "➕ Nuovo Alert",
     "📨 Storico notifiche",
     "📡 Stato sistema",
     "⚙️ Run & Heartbeat",
@@ -80,7 +80,7 @@ tab_active, tab_new, tab_history, tab_status, tab_runs = st.tabs([
 with tab_active:
     rows = alert_rows()
     if not rows:
-        st.info("Nessun alert presente. Creane uno dalla scheda 'Nuovo alert'.")
+        st.info("Nessun alert presente. Creane uno dalla scheda 'Nuovo Alert'.")
     else:
         frame = pd.DataFrame(rows)
         for col in ("expires_at", "last_checked_at", "triggered_at", "last_notification_at", "created_at"):
@@ -125,8 +125,8 @@ with tab_active:
             refresh()
 
 with tab_new:
-    st.subheader("🤖 Alert Assistant")
-    st.caption("Incolla uno o più alert. Il parser locale prova prima senza API, crea una preview e inserisce solo dopo conferma.")
+    st.subheader("🤖 CREA CON ALERT ASSISTANT")
+    st.caption("Incolla uno o più alert in linguaggio naturale. Il parser crea una preview e inserisce gli alert solo dopo la tua conferma.")
 
     default_example = "MSFT sopra 525 fino al 15/09\nSPGI sopra 445 e sotto 425 fino al 25/09\nNVO sopra 48,2 fino al 15 settembre"
     assistant_text = st.text_area(
@@ -186,8 +186,8 @@ with tab_new:
                 st.success(f"Inseriti {inserted} alert nel database. La casella resta compilata così puoi verificare cosa hai appena inviato.")
 
     st.divider()
-    st.subheader("Inserimento manuale")
-    st.caption("Il prezzo attuale viene letto automaticamente dal motore. Tu imposti soltanto la condizione e il livello.")
+    st.subheader("✍️ CREA MANUALMENTE")
+    st.caption("Alternativa all'Assistant: inserisci ticker, condizione, livello e scadenza a mano.")
     with st.form("new_alert", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
         ticker = c1.text_input("Ticker", placeholder="MSFT").strip().upper()
