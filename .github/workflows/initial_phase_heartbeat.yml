@@ -1,0 +1,29 @@
+name: V2 Initial Phase Heartbeat
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '10,40 7-21 * * 1-5'
+
+concurrency:
+  group: v2-initial-phase-heartbeat
+  cancel-in-progress: true
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
+      GMAIL_RECIPIENT: ${{ secrets.GMAIL_RECIPIENT }}
+      GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
+      WHATSAPP_NUMBER: ${{ secrets.WHATSAPP_NUMBER }}
+      CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Send V2 initial monitoring heartbeat when due
+        run: python -m monitor.initial_phase_heartbeat
