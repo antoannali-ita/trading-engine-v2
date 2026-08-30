@@ -1,0 +1,31 @@
+name: V2 Parity Export
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 14:45 UTC keeps both Italy and USA regular sessions open during DST.
+    - cron: '45 14 * * 1-5'
+
+jobs:
+  export:
+    strategy:
+      fail-fast: false
+      matrix:
+        market: [italy, usa]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Export read-only V2 snapshot
+        env:
+          TRADING_CAPITAL: '35000'
+        run: python tools/parity_export.py --market "${{ matrix.market }}" --output "parity/v2_${{ matrix.market }}.json" --top 10
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v2-parity-${{ matrix.market }}
+          path: parity/v2_${{ matrix.market }}.json
+          retention-days: 14
