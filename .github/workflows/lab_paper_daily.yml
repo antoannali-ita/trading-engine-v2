@@ -48,6 +48,8 @@ jobs:
         run: python jobs/cleanup_watchlist_stale.py
       - name: Enrich V2 metadata, risk identity and Fineco cost scenarios
         run: python jobs/enrich_lab_metadata.py
+      - name: Sync final signal state into active watchlist
+        run: python jobs/sync_watchlist_final_state.py
       - name: Update signal outcomes D1-D60 MFE MAE
         run: python jobs/run_signal_outcomes.py
       - name: Sync fill-based execution and normalized R metrics
