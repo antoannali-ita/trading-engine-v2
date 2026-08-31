@@ -25,6 +25,11 @@ def main() -> int:
     stale_before = (datetime.now(timezone.utc) - timedelta(days=STALE_AFTER_DAYS)).isoformat()
 
     try:
+        # Legacy/malformed active rows with no heartbeat can never satisfy `< cutoff`.
+        # Treat them as stale before applying the normal age-based cleanup.
+        client.table("lab_watchlist").update({"active": False}).is_(
+            "last_seen_at", "null"
+        ).eq("active", True).execute()
         client.table("lab_watchlist").update({"active": False}).lt(
             "last_seen_at", stale_before
         ).eq("active", True).execute()
@@ -33,7 +38,17 @@ def main() -> int:
         return 1
 
     try:
-        remaining = (
+        remaining_null = (
+            client.table("lab_watchlist")
+            .select("symbol,strategy,last_seen_at")
+            .is_("last_seen_at", "null")
+            .eq("active", True)
+            .limit(10)
+            .execute()
+            .data
+            or []
+        )
+        remaining_stale = (
             client.table("lab_watchlist")
             .select("symbol,strategy,last_seen_at")
             .lt("last_seen_at", stale_before)
@@ -47,8 +62,9 @@ def main() -> int:
         print(f"FATAL: cannot verify lab_watchlist stale cleanup: {exc}")
         return 1
 
+    remaining = remaining_null + remaining_stale
     if remaining:
-        print(f"FATAL: stale active watchlist rows remain after cleanup: {remaining}")
+        print(f"FATAL: stale active watchlist rows remain after cleanup: {remaining[:10]}")
         return 1
 
     print(f"lab_watchlist stale cleanup verified; cutoff={stale_before}")
