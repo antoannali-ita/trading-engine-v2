@@ -12,9 +12,6 @@ on:
         description: Optional manual_run_requests UUID
         required: false
         type: string
-  push:
-    paths:
-      - '.github/workflows/master_scan.yml'
   schedule:
     - cron: '40 15 * * 1-5'
     - cron: '0 17 * * 1-5'
@@ -27,6 +24,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
       - run: pip install -r requirements.txt
       - uses: actions/cache@v4
         with:
@@ -37,15 +35,12 @@ jobs:
             v2-parity-${{ runner.os }}-
             v2-fast-italy-${{ runner.os }}-
             v2-fast-usa-${{ runner.os }}-
-      - run: pytest -q
       - name: Determine market
         id: market
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             MARKET="${{ inputs.market }}"
-          elif [ "${{ github.event_name }}" = "push" ]; then
-            MARKET="usa"
           elif [ "${{ github.event.schedule }}" = "40 15 * * 1-5" ]; then
             MARKET="italy"
           elif [ "${{ github.event.schedule }}" = "0 17 * * 1-5" ]; then

@@ -3,7 +3,8 @@ name: Trading Engine V2 Orchestrator
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *'
+    # LEAN: ogni 30 minuti, solo giorni feriali e fascia utile EU/USA.
+    - cron: '*/30 6-22 * * 1-5'
 
 concurrency:
   group: trading-engine-v2-orchestrator

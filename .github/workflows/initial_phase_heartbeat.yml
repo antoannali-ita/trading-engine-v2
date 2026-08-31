@@ -3,7 +3,10 @@ name: V2 Initial Phase Heartbeat
 on:
   workflow_dispatch:
   schedule:
-    - cron: '10,40 7-21 * * 1-5'
+    # Possibili slot Italia 09:10/13:10/17:10 considerando CET/CEST.
+    - cron: '10 7,8,11,12,15,16 * * 1-5'
+    # Possibili slot USA 09:40/13:40 considerando EST/EDT.
+    - cron: '40 13,14,17,18 * * 1-5'
 
 concurrency:
   group: v2-initial-phase-heartbeat
@@ -24,6 +27,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
       - run: pip install -r requirements.txt
       - name: Send V2 initial monitoring heartbeat when due
         run: python -m monitor.initial_phase_heartbeat

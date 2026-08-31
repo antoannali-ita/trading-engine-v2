@@ -14,11 +14,12 @@ on:
         required: false
         type: string
   schedule:
-    - cron: '*/5 7-21 * * 1-5'
+    # LEAN: da 5 a 30 minuti. Mantiene controllo intraday senza moltiplicare i runner.
+    - cron: '*/30 7-21 * * 1-5'
 
 concurrency:
   group: fast-monitor-v2
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
