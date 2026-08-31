@@ -31,6 +31,7 @@ MARKET_HOURS = {
 }
 
 MAX_QUOTE_AGE_MINUTES = 20
+WHATSAPP_DECISIONS = {"PRE_BUY", "PRE_BUY_HIGH", "BUY_NOW", "BUY_LIMIT", "SHADOW_BUY", "BUY"}
 
 
 def load_cfg(market):
@@ -100,6 +101,18 @@ def quote_is_fresh(quote_ts: datetime | None, now: datetime | None = None) -> bo
     return 0 <= age_seconds <= MAX_QUOTE_AGE_MINUTES * 60
 
 
+def _candidate_decision(candidate: dict) -> str:
+    for key in ("decision", "display_state", "status", "state"):
+        value = str(candidate.get(key) or "").upper().strip().replace("-", "_").replace(" ", "_")
+        if value:
+            return value
+    return ""
+
+
+def should_notify_fast_whatsapp(candidate: dict, state: str) -> bool:
+    return _candidate_decision(candidate) in WHATSAPP_DECISIONS and state == "IN_BUY_ZONE"
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--market", choices=["usa", "italy"], required=True)
@@ -145,7 +158,7 @@ def main():
 
             key = f"{market}:{t}:fast_state"
             previous_state = sm.state.get(key)
-            actionable = state in {"STOP", "IN_BUY_ZONE"}
+            actionable = should_notify_fast_whatsapp(c, state)
             signal_id = record_engine_signal(
                 run_id=run_id,
                 engine_id=engine_id,
@@ -160,6 +173,7 @@ def main():
                 is_actionable=actionable,
                 metadata={
                     "previous_state": previous_state,
+                    "core_decision": _candidate_decision(c),
                     "buy_zone_low": low,
                     "buy_zone_high": high,
                     "max_buy": maxb,
@@ -178,10 +192,11 @@ def main():
             if sm.changed(key, state):
                 print(t, px, f"{previous_state}->{state}")
                 sm.set(key, state)
-                if state in {"STOP", "IN_BUY_ZONE"}:
+                if should_notify_fast_whatsapp(c, state):
                     if cfg.get("send_whatsapp"):
                         try:
-                            sent = bool(send_whatsapp(f"{market.upper()} {t}: {previous_state} -> {state} @ {px:.2f}"))
+                            decision = _candidate_decision(c)
+                            sent = bool(send_whatsapp(f"{market.upper()} {t}: {decision} | {previous_state} -> {state} @ {px:.2f}"))
                             record_notification(
                                 run_id=run_id,
                                 signal_id=signal_id,
@@ -190,7 +205,7 @@ def main():
                                 channel="WHATSAPP",
                                 status="SENT" if sent else "FAILED",
                                 provider="CALLMEBOT",
-                                payload={"previous_state": previous_state, "state": state, "price": px},
+                                payload={"core_decision": decision, "previous_state": previous_state, "state": state, "price": px},
                             )
                         except Exception as exc:
                             record_notification(
