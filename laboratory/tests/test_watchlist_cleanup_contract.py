@@ -11,8 +11,11 @@ MANUAL = REPO_ROOT / ".github" / "workflows" / "lab_paper_daily.yml"
 def test_cleanup_deactivates_and_verifies_stale_rows():
     source = CLEANUP.read_text(encoding="utf-8")
     assert 'client.table("lab_watchlist").update({"active": False})' in source
+    assert '.is_("last_seen_at", "null")' in source
     assert '.lt("last_seen_at", stale_before)' in source
     assert '.eq("active", True)' in source
+    assert "remaining_null" in source
+    assert "remaining_stale" in source
     assert "stale active watchlist rows remain after cleanup" in source
     assert "return 1" in source
 
