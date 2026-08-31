@@ -1,13 +1,32 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
+from zoneinfo import ZoneInfo
 
 import yfinance as yf
 from supabase import create_client
 
 from alert_center.engine import evaluate_alert, is_equivalent_recent_notification
 from fineco_alert_bridge.whatsapp import send_callmebot
+
+
+MARKET_HOURS = {
+    "ITALY": {"timezone": "Europe/Rome", "open": time(9, 0), "close": time(17, 30)},
+    "USA": {"timezone": "America/New_York", "open": time(9, 30), "close": time(16, 0)},
+}
+
+
+def _market_session_open(market: str, now: datetime | None = None) -> bool:
+    market = str(market or "").upper()
+    rule = MARKET_HOURS.get(market)
+    if rule is None:
+        return False
+    local = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo(rule["timezone"]))
+    if local.weekday() >= 5:
+        return False
+    clock = local.time().replace(tzinfo=None)
+    return rule["open"] <= clock <= rule["close"]
 
 
 def _client():
@@ -89,7 +108,7 @@ def process_active_alerts() -> dict[str, int]:
         or []
     )
 
-    stats = {"active": len(rows), "checked": 0, "triggered": 0, "sent": 0, "suppressed": 0, "expired": 0, "errors": 0}
+    stats = {"active": len(rows), "checked": 0, "triggered": 0, "sent": 0, "suppressed": 0, "expired": 0, "skipped_session": 0, "errors": 0}
 
     for alert in rows:
         alert_id = alert["alert_id"]
@@ -104,7 +123,12 @@ def process_active_alerts() -> dict[str, int]:
                     stats["expired"] += 1
                     continue
 
-            price = _last_price(str(alert["ticker"]), str(alert["market"]))
+            market = str(alert.get("market") or "USA").upper()
+            if not _market_session_open(market, now):
+                stats["skipped_session"] += 1
+                continue
+
+            price = _last_price(str(alert["ticker"]), market)
             stats["checked"] += 1
             decision = evaluate_alert(alert["condition_type"], alert["trigger_level"], price)
             client.table("trading_alerts").update({"last_price": price, "last_checked_at": now.isoformat()}).eq("alert_id", alert_id).execute()

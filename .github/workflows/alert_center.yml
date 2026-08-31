@@ -3,8 +3,8 @@ name: Alert Center
 on:
   workflow_dispatch:
   schedule:
-    # LEAN: alert prezzo ogni 15 minuti. Rimossi trigger duplicati workflow_run/push.
-    - cron: '*/15 7-21 * * 1-5'
+    # Ogni 30 minuti nella finestra UTC che copre le sessioni ITALIA + USA.
+    - cron: '*/30 7-21 * * 1-5'
 
 permissions:
   contents: read
@@ -30,7 +30,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: python -m system_health.run_log start --module ALERT_CENTER --component price-alerts
-      - name: Check Alert Center rules and send WhatsApp only
+      - name: Check Alert Center rules and send WhatsApp only in regular market session
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}

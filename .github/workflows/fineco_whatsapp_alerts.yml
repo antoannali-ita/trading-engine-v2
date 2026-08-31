@@ -3,8 +3,8 @@ name: Fineco WhatsApp Alerts
 on:
   workflow_dispatch:
   schedule:
-    # LEAN: polling Gmail/Fineco ogni 15 minuti. Rimossi trigger duplicati da altri workflow.
-    - cron: '*/15 6-22 * * 1-5'
+    # Ogni 30 minuti nella finestra UTC che copre le sessioni ITALIA + USA.
+    - cron: '*/30 7-21 * * 1-5'
 
 permissions:
   contents: read
@@ -18,18 +18,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
-      - name: Check Italian market alert window
+      - name: Check regular market window
         id: window
         shell: bash
         run: |
-          HOUR=$(TZ=Europe/Rome date +%H)
-          DAY=$(TZ=Europe/Rome date +%u)
-          if [ "$DAY" -ge 1 ] && [ "$DAY" -le 5 ] && [ "$HOUR" -ge 8 ] && [ "$HOUR" -lt 23 ]; then
+          IT_DAY=$(TZ=Europe/Rome date +%u)
+          IT_HM=$(TZ=Europe/Rome date +%H%M)
+          US_DAY=$(TZ=America/New_York date +%u)
+          US_HM=$(TZ=America/New_York date +%H%M)
+          IT_OPEN=false
+          US_OPEN=false
+          if [ "$IT_DAY" -ge 1 ] && [ "$IT_DAY" -le 5 ] && [ "$IT_HM" -ge 0900 ] && [ "$IT_HM" -le 1730 ]; then IT_OPEN=true; fi
+          if [ "$US_DAY" -ge 1 ] && [ "$US_DAY" -le 5 ] && [ "$US_HM" -ge 0930 ] && [ "$US_HM" -le 1600 ]; then US_OPEN=true; fi
+          if [ "$IT_OPEN" = true ] || [ "$US_OPEN" = true ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "Dentro fascia Italia: $(TZ=Europe/Rome date)"
+            echo "Sessione regolare aperta: IT=$IT_OPEN USA=$US_OPEN"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "Fuori fascia Italia: $(TZ=Europe/Rome date)"
+            echo "Entrambi i mercati fuori sessione regolare"
           fi
 
       - name: Checkout
@@ -41,6 +47,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
 
       - name: Install Fineco bridge dependencies
         if: steps.window.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
