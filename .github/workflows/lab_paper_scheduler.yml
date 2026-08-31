@@ -72,6 +72,13 @@ jobs:
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: python jobs/enrich_lab_metadata.py
 
+      - name: Sync final signal state into active watchlist
+        working-directory: laboratory
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python jobs/sync_watchlist_final_state.py
+
       - name: Update signal outcomes D1-D60 MFE MAE
         working-directory: laboratory
         env:
