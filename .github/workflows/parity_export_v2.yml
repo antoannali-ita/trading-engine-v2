@@ -23,6 +23,7 @@ jobs:
       - name: Export read-only V2 snapshot
         env:
           TRADING_CAPITAL: '35000'
+          PYTHONPATH: '.'
         run: python tools/parity_export.py --market "${{ matrix.market }}" --output "parity/v2_${{ matrix.market }}.json" --top 10
       - uses: actions/upload-artifact@v4
         with:
