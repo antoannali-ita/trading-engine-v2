@@ -2,6 +2,11 @@ name: V2 Parity Export
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/parity_export_v2.yml'
+      - 'tools/parity_export.py'
   schedule:
     # 14:45 UTC keeps both Italy and USA regular sessions open during DST.
     - cron: '45 14 * * 1-5'
