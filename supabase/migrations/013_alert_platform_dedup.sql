@@ -21,7 +21,7 @@ with ranked as (
             order by updated_at desc nulls last, created_at desc nulls last, id desc
         ) as rn
     from alert_platform.alerts
-    where upper(coalesce(status, '')) in ('ACTIVE', 'CLAIMED', 'V3_PENDING', 'V3_RETRY')
+    where upper(coalesce(status::text, '')) in ('ACTIVE', 'CLAIMED', 'V3_PENDING', 'V3_RETRY')
 )
 delete from alert_platform.alerts a
 using ranked r
@@ -40,7 +40,7 @@ on alert_platform.alerts (
     coalesce(threshold_max, -999999999::numeric),
     coalesce(valid_until, 'infinity'::timestamptz)
 )
-where upper(coalesce(status, '')) in ('ACTIVE', 'CLAIMED', 'V3_PENDING', 'V3_RETRY');
+where upper(coalesce(status::text, '')) in ('ACTIVE', 'CLAIMED', 'V3_PENDING', 'V3_RETRY');
 
 comment on index alert_platform.uq_alert_platform_actionable_exact is
 'Prevents exact duplicate actionable alerts while preserving distinct conditions/ranges/expiries.';
