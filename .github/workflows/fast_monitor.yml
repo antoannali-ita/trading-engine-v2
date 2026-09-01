@@ -14,10 +14,10 @@ on:
         required: false
         type: string
   schedule:
-    # ITALIA: wake-up orario nella finestra che copre 09:00-17:30 Europe/Rome (CET/CEST).
-    - cron: '0 7-16 * * 1-5'
-    # USA: wake-up orario nella finestra che copre 09:30-16:00 America/New_York (EST/EDT).
-    - cron: '30 13-21 * * 1-5'
+    # ITALIA: ogni 15 minuti nella finestra che copre 09:00-17:30 Europe/Rome.
+    - cron: '*/15 7-16 * * 1-5'
+    # USA: ogni 15 minuti nella finestra che copre 09:30-16:00 America/New_York.
+    - cron: '*/15 13-21 * * 1-5'
 
 concurrency:
   group: fast-monitor-v2
@@ -31,7 +31,7 @@ jobs:
     name: Fast Monitor ITALY
     runs-on: ubuntu-latest
     if: >
-      (github.event_name == 'schedule' && github.event.schedule == '0 7-16 * * 1-5') ||
+      (github.event_name == 'schedule' && github.event.schedule == '*/15 7-16 * * 1-5') ||
       (github.event_name == 'workflow_dispatch' && (github.event.inputs.market == 'italy' || github.event.inputs.market == 'both'))
     steps:
       - uses: actions/checkout@v4
@@ -76,7 +76,7 @@ jobs:
     name: Fast Monitor USA
     runs-on: ubuntu-latest
     if: >
-      (github.event_name == 'schedule' && github.event.schedule == '30 13-21 * * 1-5') ||
+      (github.event_name == 'schedule' && github.event.schedule == '*/15 13-21 * * 1-5') ||
       (github.event_name == 'workflow_dispatch' && (github.event.inputs.market == 'usa' || github.event.inputs.market == 'both'))
     steps:
       - uses: actions/checkout@v4
