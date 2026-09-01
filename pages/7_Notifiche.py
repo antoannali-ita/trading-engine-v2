@@ -14,6 +14,15 @@ st.set_page_config(page_title="Alert Center", page_icon="🔔", layout="wide")
 st.title("🔔 Alert Center")
 st.caption("Alert prezzo, notifiche e stato operativo dei processi in un unico centro di controllo.")
 
+ACTIONABLE_STATUSES = {
+    "ACTIVE",
+    "CLAIMED",
+    "V3_PENDING",
+    "V3_RUNNING",
+    "V3_RETRY",
+    "V3_FAILED",
+}
+
 
 def extract_message(payload):
     if payload is None:
@@ -59,10 +68,50 @@ def platform_alert_rows() -> list[dict]:
         return []
 
 
+def _actionable_rows(rows: list[dict]) -> list[dict]:
+    """Keep only rows that can still generate or retry an operational alert."""
+    return [
+        dict(row)
+        for row in rows
+        if str(row.get("status") or "").upper() in ACTIONABLE_STATUSES
+    ]
+
+
+def _logical_key(row: dict) -> tuple:
+    """Stable logical identity used as a UI safety net against exact duplicates."""
+    return (
+        str(row.get("market") or "").strip().upper(),
+        str(row.get("ticker") or "").strip().upper(),
+        str(row.get("alert_type") or "").strip().upper(),
+        row.get("threshold"),
+        row.get("threshold_min"),
+        row.get("threshold_max"),
+        row.get("valid_until"),
+    )
+
+
+def _dedupe_exact_rows(rows: list[dict]) -> list[dict]:
+    """Defensive UI dedupe. Database migration 013 remains the primary protection."""
+    ordered = sorted(
+        (dict(row) for row in rows),
+        key=lambda row: str(row.get("updated_at") or row.get("created_at") or ""),
+        reverse=True,
+    )
+    seen: set[tuple] = set()
+    output: list[dict] = []
+    for row in ordered:
+        key = _logical_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(row)
+    return output
+
+
 def _validation_rows(rows: list[dict]) -> list[dict]:
-    """Adapt platform rows to the local parser duplicate-check contract."""
+    """Adapt current actionable platform rows to the parser duplicate-check contract."""
     output = []
-    for row in rows:
+    for row in _dedupe_exact_rows(_actionable_rows(rows)):
         alert_type = str(row.get("alert_type") or "").upper()
         if alert_type not in {"PRICE_ABOVE", "PRICE_BELOW"}:
             continue
@@ -97,9 +146,9 @@ def _condition_label(row: dict) -> str:
 
 
 def consolidate_platform_alerts(rows: list[dict]) -> list[dict]:
-    """One logical dashboard row per market+ticker."""
+    """One clean operational dashboard row per market+ticker."""
     groups: dict[tuple[str, str], list[dict]] = {}
-    for raw in rows:
+    for raw in _dedupe_exact_rows(_actionable_rows(rows)):
         ticker = str(raw.get("ticker") or "").strip().upper()
         market = str(raw.get("market") or "").strip().upper()
         if not ticker:
@@ -112,12 +161,7 @@ def consolidate_platform_alerts(rows: list[dict]) -> list[dict]:
         "V3_RUNNING": 3,
         "V3_PENDING": 4,
         "V3_RETRY": 5,
-        "TRIGGERED": 6,
-        "ACTIVE": 7,
-        "V3_COMPLETED": 8,
-        "PROCESSED": 9,
-        "EXPIRED": 10,
-        "CANCELLED": 11,
+        "ACTIVE": 6,
     }
     consolidated: list[dict] = []
     for (market, ticker), items in groups.items():
@@ -133,7 +177,6 @@ def consolidate_platform_alerts(rows: list[dict]) -> list[dict]:
             {
                 "Ticker": ticker,
                 "Mercato": market or "N/D",
-                "Alert": len(items),
                 "Condizioni": " | ".join(conditions),
                 "Prezzo": latest.get("last_price"),
                 "Stato": effective_status,
@@ -178,38 +221,28 @@ tab_active, tab_new, tab_history, tab_status, tab_runs = st.tabs([
 
 with tab_active:
     platform_rows = platform_alert_rows()
+    actionable_rows = _dedupe_exact_rows(_actionable_rows(platform_rows))
 
-    if platform_rows:
-        consolidated = consolidate_platform_alerts(platform_rows)
-        raw_frame = pd.DataFrame(platform_rows)
+    if actionable_rows:
+        consolidated = consolidate_platform_alerts(actionable_rows)
+        raw_frame = pd.DataFrame(actionable_rows)
 
         c1, c2, c3, c4 = st.columns(4)
-        active_like = raw_frame["status"].isin(["ACTIVE", "CLAIMED"])
         c1.metric("Ticker monitorati", len(consolidated))
-        c2.metric("Alert attivi", int(active_like.sum()))
-        c3.metric("Scattati", int((raw_frame["status"] == "TRIGGERED").sum()))
-        c4.metric("V3 Failed", int((raw_frame["status"] == "V3_FAILED").sum()))
+        c2.metric("Alert operativi", len(actionable_rows))
+        c3.metric("Attivi", int((raw_frame["status"] == "ACTIVE").sum()))
+        c4.metric("Da verificare", int(raw_frame["status"].isin(["V3_RETRY", "V3_FAILED"]).sum()))
 
         st.caption(
-            "Source of truth: `alert_platform.alerts`. Una riga per ticker; condizioni multiple sono raggruppate."
+            "Source of truth: `alert_platform.alerts`. Mostrati solo alert operativi; "
+            "record storici e duplicati esatti non compaiono in questa tabella."
         )
         status_options = sorted({row["Stato"] for row in consolidated})
-        default_statuses = [
-            s for s in ("ACTIVE", "CLAIMED", "TRIGGERED", "V3_PENDING", "V3_RUNNING", "V3_RETRY", "V3_FAILED")
-            if s in status_options
-        ]
-        status_filter = st.multiselect("Stato", status_options, default=default_statuses)
+        status_filter = st.multiselect("Stato", status_options, default=status_options)
         consolidated_view = [row for row in consolidated if not status_filter or row["Stato"] in status_filter]
         st.dataframe(pd.DataFrame(consolidated_view), hide_index=True, use_container_width=True)
-
-        duplicates = sum(max(0, row["Alert"] - 1) for row in consolidated)
-        if duplicates:
-            st.warning(
-                f"Rilevati {duplicates} record aggiuntivi sullo stesso ticker. La vista li raggruppa; "
-                "la migration di deduplica rimuove solo i duplicati esatti attivi."
-            )
     else:
-        st.info("Nessun alert presente in `alert_platform.alerts`.")
+        st.info("Nessun alert operativo presente in `alert_platform.alerts`.")
 
 with tab_new:
     st.subheader("🤖 CREA CON ALERT ASSISTANT")
@@ -261,7 +294,7 @@ with tab_new:
             insertable = [row for row in validated if row["validation"] == "OK"]
             duplicates = [row for row in validated if row["validation"] == "DUPLICATE"]
             if duplicates:
-                st.info(f"{len(duplicates)} alert già presenti: non verranno duplicati.")
+                st.info(f"{len(duplicates)} alert operativi già presenti: non verranno duplicati.")
 
             if st.button(
                 f"✅ Inserisci {len(insertable)} alert",
@@ -301,7 +334,7 @@ with tab_new:
                     for row in existing
                 )
                 if duplicate:
-                    st.warning("Alert identico già presente: nessun duplicato inserito.")
+                    st.warning("Alert operativo identico già presente: nessun duplicato inserito.")
                 else:
                     payload = {
                         "ticker": ticker,
