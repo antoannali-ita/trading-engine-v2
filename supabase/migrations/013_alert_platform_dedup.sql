@@ -5,15 +5,15 @@
 begin;
 
 -- Keep the most recently updated row for an exact logical duplicate.
--- Different conditions, thresholds, ranges or validity dates are preserved.
+-- Cast enum-backed fields to text before COALESCE/UPPER.
 with ranked as (
     select
         id,
         row_number() over (
             partition by
-                upper(coalesce(market, '')),
-                upper(coalesce(ticker, '')),
-                upper(coalesce(alert_type, '')),
+                upper(coalesce(market::text, '')),
+                upper(coalesce(ticker::text, '')),
+                upper(coalesce(alert_type::text, '')),
                 threshold,
                 threshold_min,
                 threshold_max,
@@ -32,9 +32,9 @@ where a.id = r.id
 -- COALESCE sentinels are outside valid price ranges and only normalize NULLs.
 create unique index if not exists uq_alert_platform_actionable_exact
 on alert_platform.alerts (
-    upper(coalesce(market, '')),
-    upper(coalesce(ticker, '')),
-    upper(coalesce(alert_type, '')),
+    upper(coalesce(market::text, '')),
+    upper(coalesce(ticker::text, '')),
+    upper(coalesce(alert_type::text, '')),
     coalesce(threshold, -999999999::numeric),
     coalesce(threshold_min, -999999999::numeric),
     coalesce(threshold_max, -999999999::numeric),
