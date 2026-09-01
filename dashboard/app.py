@@ -26,7 +26,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Layout responsive unico per tutte le pagine gestite da st.navigation.
 st.markdown(
     """
     <style>
@@ -81,7 +80,7 @@ GUIDE = {
     "Lista osservazione": "Titoli interessanti da seguire nel tempo. Non equivale a COMPRA: evidenzia avvicinamento a ingresso, cambi di stato e necessità di rianalisi.",
     "Comitato pre-trade": "Due diligence manuale pre-trade. Il CORE resta la fonte dei livelli operativi; il Comitato può confermare o bloccare, non creare un acquisto autonomo.",
     "Esegui ora": "Avvio manuale controllato dei motori disponibili. Mostra avanzamento e stato senza generare ordini automatici.",
-    "Notifiche": "Storico dei ticker per cui è stata generata una notifica. Mostra canale, esito e messaggio quando disponibile.",
+    "Notifiche": "Alert operativi, storico notifiche e stato dei processi. La sorgente operativa degli alert è alert_platform.alerts.",
     "Panoramica laboratorio": "Sintesi del Laboratorio: candidati, segnali simulati, esperimenti e risultati senza impatto automatico sulla Produzione.",
     "Controllo laboratorio": "Controlli operativi e stato delle pipeline sperimentali del Laboratorio.",
     "Strategie": "Area di ricerca sulle strategie: confronti, prove e validazioni prima di una eventuale promozione.",
@@ -89,7 +88,6 @@ GUIDE = {
     "Arricchimento dati": "Arricchimento dei candidati con nuove feature e sorgenti sperimentali. È ricerca, non segnale operativo autonomo.",
     "Portafoglio simulato": "Portafoglio simulato del Laboratorio. Serve a misurare le strategie senza capitale reale.",
     "Evoluzione ricerca": "Storico di esperimenti, varianti e risultati usati per decidere cosa mantenere, modificare o scartare.",
-    "Applicazione completa": "Interfaccia storica completa. Contiene le viste non ancora portate nel menu principale ed è mantenuta come accesso di sicurezza.",
 }
 
 
@@ -118,9 +116,6 @@ try:
             _page("2_Feature_Enrichment.py", "Arricchimento dati", "🧬"),
             _page("3_Paper_Portfolio.py", "Portafoglio simulato", "📄"),
             _page("4_Research_Evolution.py", "Evoluzione ricerca", "📈"),
-        ],
-        "ALTRO": [
-            _page("99_App_Completa.py", "Applicazione completa", "🧰"),
         ],
     }
 
