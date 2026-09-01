@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from alert_center.alert_parser import parse_alert_text, validate_parsed_alerts
-from dashboard.data_access import get_client, notifications, safe_table_rows, utc_label
+from dashboard.data_access import get_client, notifications, utc_label
 from system_health.dashboard import render_run_ledger, render_system_status
 
 st.set_page_config(page_title="Alert Center", page_icon="🔔", layout="wide")
@@ -38,13 +38,8 @@ def extract_message(payload):
     return str(payload)
 
 
-def alert_rows():
-    """Legacy alerts, still used by the old create/manage controls."""
-    return safe_table_rows("trading_alerts", order="created_at", limit=2000)
-
-
 def platform_alert_rows() -> list[dict]:
-    """Read the Supabase-centred alert platform, the current source of truth."""
+    """Read the single alert source of truth."""
     try:
         return (
             get_client()
@@ -62,6 +57,25 @@ def platform_alert_rows() -> list[dict]:
         )
     except Exception:
         return []
+
+
+def _validation_rows(rows: list[dict]) -> list[dict]:
+    """Adapt platform rows to the local parser duplicate-check contract."""
+    output = []
+    for row in rows:
+        alert_type = str(row.get("alert_type") or "").upper()
+        if alert_type not in {"PRICE_ABOVE", "PRICE_BELOW"}:
+            continue
+        if row.get("threshold") is None:
+            continue
+        output.append(
+            {
+                "ticker": row.get("ticker"),
+                "condition_type": alert_type,
+                "trigger_level": row.get("threshold"),
+            }
+        )
+    return output
 
 
 def _condition_label(row: dict) -> str:
@@ -83,7 +97,7 @@ def _condition_label(row: dict) -> str:
 
 
 def consolidate_platform_alerts(rows: list[dict]) -> list[dict]:
-    """One logical dashboard row per market+ticker, without deleting DB alerts."""
+    """One logical dashboard row per market+ticker."""
     groups: dict[tuple[str, str], list[dict]] = {}
     for raw in rows:
         ticker = str(raw.get("ticker") or "").strip().upper()
@@ -132,30 +146,25 @@ def consolidate_platform_alerts(rows: list[dict]) -> list[dict]:
     return sorted(consolidated, key=lambda x: (x["Mercato"], x["Ticker"]))
 
 
-def refresh():
-    st.rerun()
-
-
 def insert_alerts(rows: list[dict]) -> int:
     payloads = []
     for row in rows:
         if row.get("validation") != "OK":
             continue
-        payloads.append({
-            "ticker": row["ticker"],
-            "market": row.get("market") or "USA",
-            "condition_type": row["condition_type"],
-            "trigger_level": row["trigger_level"],
-            "status": "ACTIVE",
-            "source": "CHAT",
-            "note": row.get("note") or "Creato da Alert Assistant",
-            "expires_at": row["expires_at"],
-            "repeatable": False,
-            "dedup_minutes": 180,
-        })
+        payloads.append(
+            {
+                "ticker": row["ticker"],
+                "market": row.get("market") or "USA",
+                "alert_type": row["condition_type"],
+                "threshold": row["trigger_level"],
+                "status": "ACTIVE",
+                "valid_until": row["expires_at"],
+                "next_check_at": None,
+            }
+        )
     if not payloads:
         return 0
-    get_client().table("trading_alerts").insert(payloads).execute()
+    get_client().schema("alert_platform").table("alerts").insert(payloads).execute()
     return len(payloads)
 
 
@@ -169,7 +178,6 @@ tab_active, tab_new, tab_history, tab_status, tab_runs = st.tabs([
 
 with tab_active:
     platform_rows = platform_alert_rows()
-    legacy_rows = alert_rows()
 
     if platform_rows:
         consolidated = consolidate_platform_alerts(platform_rows)
@@ -183,8 +191,7 @@ with tab_active:
         c4.metric("V3 Failed", int((raw_frame["status"] == "V3_FAILED").sum()))
 
         st.caption(
-            "Vista consolidata dalla source of truth `alert_platform`: una riga per ticker. "
-            "Più condizioni sullo stesso ticker restano nel database e vengono mostrate insieme."
+            "Source of truth: `alert_platform.alerts`. Una riga per ticker; condizioni multiple sono raggruppate."
         )
         status_options = sorted({row["Stato"] for row in consolidated})
         default_statuses = [
@@ -197,49 +204,12 @@ with tab_active:
 
         duplicates = sum(max(0, row["Alert"] - 1) for row in consolidated)
         if duplicates:
-            st.info(
-                f"Vista merge attiva: {duplicates} alert aggiuntivi sono raggruppati sotto il relativo ticker, "
-                "non duplicati come righe separate."
+            st.warning(
+                f"Rilevati {duplicates} record aggiuntivi sullo stesso ticker. La vista li raggruppa; "
+                "la migration di deduplica rimuove solo i duplicati esatti attivi."
             )
-    elif legacy_rows:
-        st.warning(
-            "Il nuovo schema `alert_platform` non è leggibile dalla dashboard. "
-            "Mostro temporaneamente la tabella legacy `trading_alerts`."
-        )
-        frame = pd.DataFrame(legacy_rows)
-        for col in ("expires_at", "last_checked_at", "triggered_at", "last_notification_at", "created_at"):
-            if col in frame.columns:
-                frame[col] = frame[col].map(utc_label)
-        wanted = [
-            "ticker", "market", "condition_type", "trigger_level", "last_price", "status",
-            "expires_at", "source", "dedup_minutes", "last_checked_at", "last_notification_at", "note",
-        ]
-        st.dataframe(frame[[c for c in wanted if c in frame.columns]], hide_index=True, use_container_width=True)
     else:
-        st.info("Nessun alert presente.")
-
-    if legacy_rows:
-        with st.expander("Gestione alert legacy", expanded=False):
-            st.caption(
-                "Questi controlli agiscono ancora su `trading_alerts`. Sono separati dalla nuova piattaforma "
-                "per non alterare la state machine Supabase durante la migrazione."
-            )
-            labels = {
-                str(r["alert_id"]): f"{r['ticker']} | {r['condition_type']} {r['trigger_level']} | {r['status']}"
-                for r in legacy_rows
-            }
-            selected_id = st.selectbox("Alert legacy", list(labels), format_func=lambda x: labels[x])
-            selected = next(r for r in legacy_rows if str(r["alert_id"]) == selected_id)
-            a, b, c = st.columns(3)
-            if a.button("⏸️ Disattiva", use_container_width=True, disabled=selected.get("status") == "DISABLED"):
-                get_client().table("trading_alerts").update({"status": "DISABLED"}).eq("alert_id", selected_id).execute()
-                refresh()
-            if b.button("▶️ Riattiva", use_container_width=True, disabled=selected.get("status") == "ACTIVE"):
-                get_client().table("trading_alerts").update({"status": "ACTIVE", "triggered_at": None}).eq("alert_id", selected_id).execute()
-                refresh()
-            if c.button("🗑️ Elimina", type="secondary", use_container_width=True):
-                get_client().table("trading_alerts").delete().eq("alert_id", selected_id).execute()
-                refresh()
+        st.info("Nessun alert presente in `alert_platform.alerts`.")
 
 with tab_new:
     st.subheader("🤖 CREA CON ALERT ASSISTANT")
@@ -275,7 +245,8 @@ with tab_new:
                     st.info("Fallback LLM previsto ma non attivo in V1: il sistema non inventa ticker, livelli o date mancanti.")
 
         if result.alerts:
-            validated = validate_parsed_alerts(result.alerts, alert_rows())
+            existing = _validation_rows(platform_alert_rows())
+            validated = validate_parsed_alerts(result.alerts, existing)
             preview = pd.DataFrame(validated)
             preview["Condizione"] = preview["condition_type"].map({"PRICE_ABOVE": ">=", "PRICE_BELOW": "<="})
             preview["Scadenza"] = preview["expires_at"].astype(str).str.slice(0, 10)
@@ -300,26 +271,20 @@ with tab_new:
             ):
                 inserted = insert_alerts(validated)
                 st.session_state.pop("alert_parse_result", None)
-                st.success(f"Inseriti {inserted} alert nel database. La casella resta compilata così puoi verificare cosa hai appena inviato.")
+                st.success(f"Inseriti {inserted} alert in `alert_platform.alerts`.")
 
     st.divider()
     st.subheader("✍️ CREA MANUALMENTE")
-    st.caption("Alternativa all'Assistant: inserisci ticker, condizione, livello e scadenza a mano.")
+    st.caption("Inserimento diretto nella piattaforma alert unica.")
     with st.form("new_alert", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
         ticker = c1.text_input("Ticker", placeholder="MSFT").strip().upper()
         market = c2.selectbox("Mercato", ["USA", "ITALY"])
         direction = c3.selectbox("Condizione", ["Prezzo >=", "Prezzo <="])
 
-        c4, c5, c6 = st.columns(3)
+        c4, c5 = st.columns(2)
         trigger_level = c4.number_input("Prezzo trigger", min_value=0.0001, value=100.0, step=0.01, format="%.4f")
         expiry_date = c5.date_input("Scadenza", value=date.today() + timedelta(days=30))
-        dedup_hours = c6.number_input("Deduplica ore", min_value=0, max_value=24, value=3, step=1)
-
-        c7, c8 = st.columns(2)
-        source = c7.selectbox("Origine", ["MANUAL", "CHAT", "PORTFOLIO", "ENGINE"])
-        repeatable = c8.checkbox("Ripetibile", value=False, help="Se disattivato, dopo il primo trigger passa a TRIGGERED.")
-        note = st.text_input("Nota", placeholder="es. breakout sopra resistenza")
 
         submitted = st.form_submit_button("➕ Aggiungi Alert", type="primary", use_container_width=True)
         if submitted:
@@ -327,20 +292,28 @@ with tab_new:
                 st.error("Ticker obbligatorio.")
             else:
                 expires = datetime.combine(expiry_date, time(23, 59), tzinfo=timezone.utc).isoformat()
-                payload = {
-                    "ticker": ticker,
-                    "market": market,
-                    "condition_type": "PRICE_ABOVE" if direction == "Prezzo >=" else "PRICE_BELOW",
-                    "trigger_level": trigger_level,
-                    "status": "ACTIVE",
-                    "source": source,
-                    "note": note or None,
-                    "expires_at": expires,
-                    "repeatable": repeatable,
-                    "dedup_minutes": int(dedup_hours * 60),
-                }
-                get_client().table("trading_alerts").insert(payload).execute()
-                st.success(f"Alert inserito: {ticker} {direction} {trigger_level:.4f}")
+                alert_type = "PRICE_ABOVE" if direction == "Prezzo >=" else "PRICE_BELOW"
+                existing = _validation_rows(platform_alert_rows())
+                duplicate = any(
+                    str(row.get("ticker") or "").upper() == ticker
+                    and str(row.get("condition_type") or "").upper() == alert_type
+                    and float(row.get("trigger_level")) == float(trigger_level)
+                    for row in existing
+                )
+                if duplicate:
+                    st.warning("Alert identico già presente: nessun duplicato inserito.")
+                else:
+                    payload = {
+                        "ticker": ticker,
+                        "market": market,
+                        "alert_type": alert_type,
+                        "threshold": trigger_level,
+                        "status": "ACTIVE",
+                        "valid_until": expires,
+                        "next_check_at": None,
+                    }
+                    get_client().schema("alert_platform").table("alerts").insert(payload).execute()
+                    st.success(f"Alert inserito: {ticker} {direction} {trigger_level:.4f}")
 
 with tab_history:
     try:
