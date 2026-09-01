@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import yfinance as yf
 from supabase import create_client
 
-from alert_center.engine import evaluate_alert, is_equivalent_recent_notification
 from fineco_alert_bridge.whatsapp import send_callmebot
 
 
@@ -15,6 +14,8 @@ MARKET_HOURS = {
     "ITALY": {"timezone": "Europe/Rome", "open": time(9, 0), "close": time(17, 30)},
     "USA": {"timezone": "America/New_York", "open": time(9, 30), "close": time(16, 0)},
 }
+
+SUPPORTED_TYPES = {"PRICE_ABOVE", "PRICE_BELOW", "MAX_BUY", "ENTRY_ZONE"}
 
 
 def _market_session_open(market: str, now: datetime | None = None) -> bool:
@@ -54,53 +55,129 @@ def _last_price(ticker: str, market: str) -> float:
     return float(hist["Close"].dropna().iloc[-1])
 
 
-def _recent_notifications(client, ticker: str) -> list[dict]:
-    return (
-        client.table("notification_events")
-        .select("ticker,event_type,channel,attempted_at,sent_at,status,payload")
-        .eq("ticker", ticker.upper())
-        .order("attempted_at", desc=True)
-        .limit(200)
-        .execute().data
-        or []
+def _parse_dt(value) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _num(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _triggered(alert: dict, price: float) -> tuple[bool, str]:
+    alert_type = str(alert.get("alert_type") or "").upper()
+    threshold = _num(alert.get("threshold"))
+    low = _num(alert.get("threshold_min"))
+    high = _num(alert.get("threshold_max"))
+
+    if alert_type == "PRICE_ABOVE":
+        return (threshold is not None and price >= threshold, f">= {threshold}")
+    if alert_type in {"PRICE_BELOW", "MAX_BUY"}:
+        return (threshold is not None and price <= threshold, f"<= {threshold}")
+    if alert_type == "ENTRY_ZONE":
+        if low is None or high is None:
+            return False, "ENTRY_ZONE incompleta"
+        lo, hi = sorted((low, high))
+        return lo <= price <= hi, f"tra {lo} e {hi}"
+    return False, f"tipo non supportato: {alert_type or 'N/D'}"
+
+
+def _message(alert: dict, price: float, condition: str) -> str:
+    ticker = str(alert.get("ticker") or "").upper()
+    market = str(alert.get("market") or "USA").upper()
+    alert_type = str(alert.get("alert_type") or "N/D").upper()
+    return "\n".join(
+        [
+            "🚨 ALERT CENTER",
+            "",
+            f"{ticker} | {market}",
+            f"Tipo: {alert_type}",
+            f"Condizione: {condition}",
+            f"Prezzo rilevato: {price:.2f}",
+            "Origine: ALERT_PLATFORM",
+        ]
     )
 
 
-def _notification_payload(alert: dict, price: float, source: str) -> dict:
-    return {
-        "source": source,
-        "alert_id": alert.get("alert_id"),
-        "ticker": alert.get("ticker"),
-        "market": alert.get("market"),
-        "condition_type": alert.get("condition_type"),
-        "trigger_level": float(alert.get("trigger_level")),
+def _recent_sent_for_alert(client, alert_id: str) -> bool:
+    """Best-effort duplicate guard using notification_events payload."""
+    try:
+        rows = (
+            client.table("notification_events")
+            .select("status,channel,sent_at,payload")
+            .eq("channel", "WHATSAPP")
+            .eq("status", "SENT")
+            .order("sent_at", desc=True)
+            .limit(200)
+            .execute().data
+            or []
+        )
+    except Exception:
+        return False
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=3)
+    for row in rows:
+        sent_at = _parse_dt(row.get("sent_at"))
+        if sent_at is None or sent_at < cutoff:
+            continue
+        payload = row.get("payload") or {}
+        if isinstance(payload, dict) and str(payload.get("alert_id") or "") == str(alert_id):
+            return True
+    return False
+
+
+def _log_notification(client, alert: dict, price: float, condition: str, status: str, event_type: str) -> None:
+    payload = {
+        "source": "ALERT_PLATFORM",
+        "alert_id": str(alert.get("id") or ""),
+        "ticker": str(alert.get("ticker") or "").upper(),
+        "market": str(alert.get("market") or "USA").upper(),
+        "alert_type": str(alert.get("alert_type") or "").upper(),
+        "threshold": alert.get("threshold"),
+        "threshold_min": alert.get("threshold_min"),
+        "threshold_max": alert.get("threshold_max"),
         "trigger_price": price,
-        "note": alert.get("note"),
+        "condition": condition,
     }
-
-
-def _message(alert: dict, price: float) -> str:
-    op = ">=" if alert.get("condition_type") == "PRICE_ABOVE" else "<="
-    note = str(alert.get("note") or "").strip()
-    lines = [
-        "🚨 ALERT CENTER",
-        "",
-        f"{str(alert.get('ticker') or '').upper()} | {str(alert.get('market') or '').upper()}",
-        f"Condizione: prezzo {op} {float(alert.get('trigger_level')):.2f}",
-        f"Prezzo rilevato: {price:.2f}",
-        f"Origine: {str(alert.get('source') or 'MANUAL').upper()}",
-    ]
-    if note:
-        lines.append(f"Nota: {note}")
-    return "\n".join(lines)
+    row = {
+        "ticker": payload["ticker"],
+        "event_type": event_type,
+        "channel": "WHATSAPP",
+        "status": status,
+        "provider": "CALLMEBOT" if status == "SENT" else "DEDUP",
+        "payload": payload,
+    }
+    if status == "SENT":
+        row["sent_at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        client.table("notification_events").insert(row).execute()
+    except Exception as exc:
+        print(f"NOTIFICATION_LOG_WARNING {type(exc).__name__}: {exc}")
 
 
 def process_active_alerts() -> dict[str, int]:
+    """Process alert_platform.alerts, the dashboard and runtime source of truth."""
     client = _client()
     now = datetime.now(timezone.utc)
+    table = client.schema("alert_platform").table("alerts")
+
     rows = (
-        client.table("trading_alerts")
-        .select("*")
+        table.select(
+            "id,ticker,market,alert_type,threshold,threshold_min,threshold_max,status,"
+            "valid_until,next_check_at,last_price,last_price_at,last_price_provider,created_at,updated_at"
+        )
         .eq("status", "ACTIVE")
         .order("created_at")
         .limit(1000)
@@ -108,77 +185,90 @@ def process_active_alerts() -> dict[str, int]:
         or []
     )
 
-    stats = {"active": len(rows), "checked": 0, "triggered": 0, "sent": 0, "suppressed": 0, "expired": 0, "skipped_session": 0, "errors": 0}
+    stats = {
+        "active": len(rows),
+        "checked": 0,
+        "triggered": 0,
+        "sent": 0,
+        "suppressed": 0,
+        "expired": 0,
+        "not_due": 0,
+        "skipped_session": 0,
+        "errors": 0,
+    }
 
     for alert in rows:
-        alert_id = alert["alert_id"]
+        alert_id = str(alert.get("id") or "")
+        ticker = str(alert.get("ticker") or "").upper()
         try:
-            expires_at = alert.get("expires_at")
-            if expires_at:
-                expiry = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
-                if expiry.tzinfo is None:
-                    expiry = expiry.replace(tzinfo=timezone.utc)
-                if expiry <= now:
-                    client.table("trading_alerts").update({"status": "EXPIRED", "last_checked_at": now.isoformat()}).eq("alert_id", alert_id).execute()
-                    stats["expired"] += 1
-                    continue
+            alert_type = str(alert.get("alert_type") or "").upper()
+            if alert_type not in SUPPORTED_TYPES:
+                table.update({"status": "V3_FAILED", "updated_at": now.isoformat()}).eq("id", alert_id).execute()
+                stats["errors"] += 1
+                print(f"ALERT_UNSUPPORTED {ticker} type={alert_type}")
+                continue
+
+            valid_until = _parse_dt(alert.get("valid_until"))
+            if valid_until is not None and valid_until <= now:
+                table.update({"status": "EXPIRED", "updated_at": now.isoformat()}).eq("id", alert_id).execute()
+                stats["expired"] += 1
+                continue
+
+            next_check = _parse_dt(alert.get("next_check_at"))
+            if next_check is not None and next_check > now:
+                stats["not_due"] += 1
+                continue
 
             market = str(alert.get("market") or "USA").upper()
             if not _market_session_open(market, now):
                 stats["skipped_session"] += 1
                 continue
 
-            price = _last_price(str(alert["ticker"]), market)
+            price = _last_price(ticker, market)
             stats["checked"] += 1
-            decision = evaluate_alert(alert["condition_type"], alert["trigger_level"], price)
-            client.table("trading_alerts").update({"last_price": price, "last_checked_at": now.isoformat()}).eq("alert_id", alert_id).execute()
-            if not decision.triggered:
+            next_check_at = (now + timedelta(minutes=25)).isoformat()
+            table.update(
+                {
+                    "last_price": price,
+                    "last_price_at": now.isoformat(),
+                    "last_price_provider": "YFINANCE",
+                    "next_check_at": next_check_at,
+                    "updated_at": now.isoformat(),
+                }
+            ).eq("id", alert_id).execute()
+
+            fired, condition = _triggered(alert, price)
+            if not fired:
                 continue
 
             stats["triggered"] += 1
-            recent = _recent_notifications(client, str(alert["ticker"]))
-            payload = _notification_payload(alert, price, "ALERT_CENTER")
-            if is_equivalent_recent_notification(alert, recent, now=now):
-                client.table("notification_events").insert({
-                    "ticker": str(alert["ticker"]).upper(),
-                    "event_type": "ALERT_DUPLICATE_SUPPRESSED",
-                    "channel": "WHATSAPP",
-                    "status": "SKIPPED",
-                    "provider": "DEDUP",
-                    "payload": payload,
-                }).execute()
-                client.table("trading_alerts").update({
-                    "status": "TRIGGERED" if not alert.get("repeatable") else "ACTIVE",
-                    "triggered_at": now.isoformat(),
-                }).eq("alert_id", alert_id).execute()
+            if _recent_sent_for_alert(client, alert_id):
+                table.update({"status": "TRIGGERED", "updated_at": now.isoformat()}).eq("id", alert_id).execute()
+                _log_notification(client, alert, price, condition, "SKIPPED", "ALERT_DUPLICATE_SUPPRESSED")
                 stats["suppressed"] += 1
                 continue
 
-            send_callmebot(_message(alert, price))
+            send_callmebot(_message(alert, price, condition))
             sent_at = datetime.now(timezone.utc).isoformat()
-            client.table("notification_events").insert({
-                "ticker": str(alert["ticker"]).upper(),
-                "event_type": "ALERT_TRIGGERED",
-                "channel": "WHATSAPP",
-                "sent_at": sent_at,
-                "status": "SENT",
-                "provider": "CALLMEBOT",
-                "payload": payload,
-            }).execute()
-            client.table("trading_alerts").update({
-                "status": "TRIGGERED" if not alert.get("repeatable") else "ACTIVE",
-                "triggered_at": sent_at,
-                "last_notification_at": sent_at,
-            }).eq("alert_id", alert_id).execute()
+            _log_notification(client, alert, price, condition, "SENT", "ALERT_TRIGGERED")
+            table.update(
+                {
+                    "status": "TRIGGERED",
+                    "last_price": price,
+                    "last_price_at": sent_at,
+                    "last_price_provider": "YFINANCE",
+                    "updated_at": sent_at,
+                }
+            ).eq("id", alert_id).execute()
             stats["sent"] += 1
+            print(f"ALERT_SENT {ticker} type={alert_type} price={price:.4f}")
         except Exception as exc:
             stats["errors"] += 1
-            client.table("trading_alerts").update({
-                "status": "ERROR",
-                "last_checked_at": now.isoformat(),
-                "metadata": {**(alert.get("metadata") or {}), "last_error": f"{type(exc).__name__}: {exc}"},
-            }).eq("alert_id", alert_id).execute()
-            print(f"ALERT_ERROR {alert.get('ticker')} {type(exc).__name__}: {exc}")
+            print(f"ALERT_ERROR {ticker} id={alert_id} {type(exc).__name__}: {exc}")
+            try:
+                table.update({"status": "V3_FAILED", "updated_at": now.isoformat()}).eq("id", alert_id).execute()
+            except Exception as update_exc:
+                print(f"ALERT_ERROR_STATUS_UPDATE_FAILED {ticker} {type(update_exc).__name__}: {update_exc}")
 
     print("alert_center " + " ".join(f"{k}={v}" for k, v in stats.items()))
     return stats
