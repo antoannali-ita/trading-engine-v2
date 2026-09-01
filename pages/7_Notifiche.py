@@ -39,7 +39,97 @@ def extract_message(payload):
 
 
 def alert_rows():
+    """Legacy alerts, still used by the old create/manage controls."""
     return safe_table_rows("trading_alerts", order="created_at", limit=2000)
+
+
+def platform_alert_rows() -> list[dict]:
+    """Read the Supabase-centred alert platform, the current source of truth."""
+    try:
+        return (
+            get_client()
+            .schema("alert_platform")
+            .table("alerts")
+            .select(
+                "id,ticker,market,alert_type,threshold,threshold_min,threshold_max,status,"
+                "valid_until,next_check_at,last_price,last_price_at,last_price_provider,created_at,updated_at"
+            )
+            .order("created_at", desc=True)
+            .limit(3000)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return []
+
+
+def _condition_label(row: dict) -> str:
+    alert_type = str(row.get("alert_type") or "").upper()
+    threshold = row.get("threshold")
+    low = row.get("threshold_min")
+    high = row.get("threshold_max")
+    if alert_type == "PRICE_ABOVE":
+        return f">= {threshold}" if threshold is not None else "PRICE_ABOVE"
+    if alert_type == "PRICE_BELOW":
+        return f"<= {threshold}" if threshold is not None else "PRICE_BELOW"
+    if alert_type == "MAX_BUY":
+        return f"MAX BUY {threshold}" if threshold is not None else "MAX BUY"
+    if alert_type == "ENTRY_ZONE":
+        return f"ENTRY {low} - {high}" if low is not None and high is not None else "ENTRY ZONE"
+    if threshold is not None:
+        return f"{alert_type} {threshold}"
+    return alert_type or "N/D"
+
+
+def consolidate_platform_alerts(rows: list[dict]) -> list[dict]:
+    """One logical dashboard row per market+ticker, without deleting DB alerts."""
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for raw in rows:
+        ticker = str(raw.get("ticker") or "").strip().upper()
+        market = str(raw.get("market") or "").strip().upper()
+        if not ticker:
+            continue
+        groups.setdefault((market, ticker), []).append(dict(raw))
+
+    status_rank = {
+        "V3_FAILED": 1,
+        "CLAIMED": 2,
+        "V3_RUNNING": 3,
+        "V3_PENDING": 4,
+        "V3_RETRY": 5,
+        "TRIGGERED": 6,
+        "ACTIVE": 7,
+        "V3_COMPLETED": 8,
+        "PROCESSED": 9,
+        "EXPIRED": 10,
+        "CANCELLED": 11,
+    }
+    consolidated: list[dict] = []
+    for (market, ticker), items in groups.items():
+        statuses = [str(x.get("status") or "N/D").upper() for x in items]
+        effective_status = min(statuses, key=lambda x: status_rank.get(x, 99)) if statuses else "N/D"
+        conditions = list(dict.fromkeys(_condition_label(x) for x in items))
+        last_price_rows = [x for x in items if x.get("last_price") is not None]
+        last_price_rows.sort(key=lambda x: str(x.get("last_price_at") or ""), reverse=True)
+        latest = last_price_rows[0] if last_price_rows else items[0]
+        valid_values = [x.get("valid_until") for x in items if x.get("valid_until")]
+        next_values = [x.get("next_check_at") for x in items if x.get("next_check_at")]
+        consolidated.append(
+            {
+                "Ticker": ticker,
+                "Mercato": market or "N/D",
+                "Alert": len(items),
+                "Condizioni": " | ".join(conditions),
+                "Prezzo": latest.get("last_price"),
+                "Stato": effective_status,
+                "Scadenza": utc_label(max(valid_values)) if valid_values else "-",
+                "Prossimo controllo": utc_label(min(next_values)) if next_values else "-",
+                "Ultimo prezzo": utc_label(latest.get("last_price_at")),
+                "Provider": latest.get("last_price_provider") or "N/D",
+            }
+        )
+    return sorted(consolidated, key=lambda x: (x["Mercato"], x["Ticker"]))
 
 
 def refresh():
@@ -78,51 +168,78 @@ tab_active, tab_new, tab_history, tab_status, tab_runs = st.tabs([
 ])
 
 with tab_active:
-    rows = alert_rows()
-    if not rows:
-        st.info("Nessun alert presente. Creane uno dalla scheda 'Nuovo Alert'.")
-    else:
-        frame = pd.DataFrame(rows)
+    platform_rows = platform_alert_rows()
+    legacy_rows = alert_rows()
+
+    if platform_rows:
+        consolidated = consolidate_platform_alerts(platform_rows)
+        raw_frame = pd.DataFrame(platform_rows)
+
+        c1, c2, c3, c4 = st.columns(4)
+        active_like = raw_frame["status"].isin(["ACTIVE", "CLAIMED"])
+        c1.metric("Ticker monitorati", len(consolidated))
+        c2.metric("Alert attivi", int(active_like.sum()))
+        c3.metric("Scattati", int((raw_frame["status"] == "TRIGGERED").sum()))
+        c4.metric("V3 Failed", int((raw_frame["status"] == "V3_FAILED").sum()))
+
+        st.caption(
+            "Vista consolidata dalla source of truth `alert_platform`: una riga per ticker. "
+            "Più condizioni sullo stesso ticker restano nel database e vengono mostrate insieme."
+        )
+        status_options = sorted({row["Stato"] for row in consolidated})
+        default_statuses = [
+            s for s in ("ACTIVE", "CLAIMED", "TRIGGERED", "V3_PENDING", "V3_RUNNING", "V3_RETRY", "V3_FAILED")
+            if s in status_options
+        ]
+        status_filter = st.multiselect("Stato", status_options, default=default_statuses)
+        consolidated_view = [row for row in consolidated if not status_filter or row["Stato"] in status_filter]
+        st.dataframe(pd.DataFrame(consolidated_view), hide_index=True, use_container_width=True)
+
+        duplicates = sum(max(0, row["Alert"] - 1) for row in consolidated)
+        if duplicates:
+            st.info(
+                f"Vista merge attiva: {duplicates} alert aggiuntivi sono raggruppati sotto il relativo ticker, "
+                "non duplicati come righe separate."
+            )
+    elif legacy_rows:
+        st.warning(
+            "Il nuovo schema `alert_platform` non è leggibile dalla dashboard. "
+            "Mostro temporaneamente la tabella legacy `trading_alerts`."
+        )
+        frame = pd.DataFrame(legacy_rows)
         for col in ("expires_at", "last_checked_at", "triggered_at", "last_notification_at", "created_at"):
             if col in frame.columns:
                 frame[col] = frame[col].map(utc_label)
-
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Attivi", int((frame["status"] == "ACTIVE").sum()))
-        c2.metric("Scattati", int((frame["status"] == "TRIGGERED").sum()))
-        c3.metric("Scaduti", int((frame["status"] == "EXPIRED").sum()))
-        c4.metric("Errori", int((frame["status"] == "ERROR").sum()))
-
-        status_filter = st.multiselect(
-            "Stato",
-            ["ACTIVE", "TRIGGERED", "EXPIRED", "DISABLED", "ERROR"],
-            default=["ACTIVE", "TRIGGERED"],
-        )
-        view = frame[frame["status"].isin(status_filter)] if status_filter else frame
         wanted = [
             "ticker", "market", "condition_type", "trigger_level", "last_price", "status",
             "expires_at", "source", "dedup_minutes", "last_checked_at", "last_notification_at", "note",
         ]
-        st.dataframe(view[[c for c in wanted if c in view.columns]], hide_index=True, use_container_width=True)
+        st.dataframe(frame[[c for c in wanted if c in frame.columns]], hide_index=True, use_container_width=True)
+    else:
+        st.info("Nessun alert presente.")
 
-        st.divider()
-        st.subheader("Gestione alert")
-        labels = {
-            str(r["alert_id"]): f"{r['ticker']} | {r['condition_type']} {r['trigger_level']} | {r['status']}"
-            for r in rows
-        }
-        selected_id = st.selectbox("Alert", list(labels), format_func=lambda x: labels[x])
-        selected = next(r for r in rows if str(r["alert_id"]) == selected_id)
-        a, b, c = st.columns(3)
-        if a.button("⏸️ Disattiva", use_container_width=True, disabled=selected.get("status") == "DISABLED"):
-            get_client().table("trading_alerts").update({"status": "DISABLED"}).eq("alert_id", selected_id).execute()
-            refresh()
-        if b.button("▶️ Riattiva", use_container_width=True, disabled=selected.get("status") == "ACTIVE"):
-            get_client().table("trading_alerts").update({"status": "ACTIVE", "triggered_at": None}).eq("alert_id", selected_id).execute()
-            refresh()
-        if c.button("🗑️ Elimina", type="secondary", use_container_width=True):
-            get_client().table("trading_alerts").delete().eq("alert_id", selected_id).execute()
-            refresh()
+    if legacy_rows:
+        with st.expander("Gestione alert legacy", expanded=False):
+            st.caption(
+                "Questi controlli agiscono ancora su `trading_alerts`. Sono separati dalla nuova piattaforma "
+                "per non alterare la state machine Supabase durante la migrazione."
+            )
+            labels = {
+                str(r["alert_id"]): f"{r['ticker']} | {r['condition_type']} {r['trigger_level']} | {r['status']}"
+                for r in legacy_rows
+            }
+            selected_id = st.selectbox("Alert legacy", list(labels), format_func=lambda x: labels[x])
+            selected = next(r for r in legacy_rows if str(r["alert_id"]) == selected_id)
+            a, b, c = st.columns(3)
+            if a.button("⏸️ Disattiva", use_container_width=True, disabled=selected.get("status") == "DISABLED"):
+                get_client().table("trading_alerts").update({"status": "DISABLED"}).eq("alert_id", selected_id).execute()
+                refresh()
+            if b.button("▶️ Riattiva", use_container_width=True, disabled=selected.get("status") == "ACTIVE"):
+                get_client().table("trading_alerts").update({"status": "ACTIVE", "triggered_at": None}).eq("alert_id", selected_id).execute()
+                refresh()
+            if c.button("🗑️ Elimina", type="secondary", use_container_width=True):
+                get_client().table("trading_alerts").delete().eq("alert_id", selected_id).execute()
+                refresh()
 
 with tab_new:
     st.subheader("🤖 CREA CON ALERT ASSISTANT")
