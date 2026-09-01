@@ -22,7 +22,7 @@ with ranked as (
                 threshold_min,
                 threshold_max
             order by
-                case status::text
+                case status
                     when 'ACTIVE' then 1
                     when 'CLAIMED' then 2
                     when 'V3_RUNNING' then 3
@@ -37,7 +37,7 @@ with ranked as (
                 id desc
         ) as rn
     from alert_platform.alerts
-    where status::text in (
+    where status in (
         'ACTIVE', 'CLAIMED', 'V3_RUNNING', 'V3_PENDING', 'V3_RETRY', 'V3_FAILED'
     )
 )
@@ -62,7 +62,7 @@ on alert_platform.alerts (
     threshold_min,
     threshold_max
 ) nulls not distinct
-where status::text in (
+where status in (
     'ACTIVE', 'CLAIMED', 'V3_RUNNING', 'V3_PENDING', 'V3_RETRY', 'V3_FAILED'
 );
 
