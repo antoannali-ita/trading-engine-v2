@@ -8,7 +8,7 @@ from urllib.request import urlopen
 
 
 class CallMeBotRejected(RuntimeError):
-    """The provider answered, but did not accept the WhatsApp message."""
+    """The provider answered, but explicitly rejected the WhatsApp message."""
 
 
 _POSITIVE_MARKERS = (
@@ -16,6 +16,8 @@ _POSITIVE_MARKERS = (
     "message sent",
     "sent successfully",
     "successfully queued",
+    "message received",
+    "api message received",
 )
 
 _NEGATIVE_MARKERS = (
@@ -31,25 +33,30 @@ _NEGATIVE_MARKERS = (
 
 
 def _validate_provider_response(status: int, body: str) -> str:
-    """Validate that CallMeBot actually accepted the request.
+    """Validate CallMeBot without rejecting legitimate 2xx responses.
 
-    CallMeBot may answer HTTP 200 even when the body contains a provider-level
-    rejection.  A green HTTP status is therefore not enough.
+    CallMeBot's own examples treat a successful HTTP status as acceptance and the
+    provider has changed response wording over time.  We therefore reject explicit
+    provider errors, accept known success markers, and otherwise accept any non-error
+    2xx response instead of creating false negatives that leave alerts stuck forever.
     """
     if status >= 400:
         raise CallMeBotRejected(f"CallMeBot HTTP {status}")
 
     normalized = " ".join((body or "").lower().split())
-    if not normalized:
-        raise CallMeBotRejected("CallMeBot response body vuoto: accettazione non verificabile")
-
     if any(marker in normalized for marker in _NEGATIVE_MARKERS):
         raise CallMeBotRejected("CallMeBot ha risposto ma ha rifiutato il messaggio")
 
-    if not any(marker in normalized for marker in _POSITIVE_MARKERS):
-        raise CallMeBotRejected("Risposta CallMeBot non riconosciuta: accettazione non verificabile")
+    if any(marker in normalized for marker in _POSITIVE_MARKERS):
+        return "PROVIDER_ACCEPTED"
 
-    return "PROVIDER_ACCEPTED"
+    # Provider response text is not a stable API contract.  For HTTP 2xx with no
+    # explicit rejection, regard the request as accepted.  This matches CallMeBot's
+    # documented PHP examples, which use the HTTP status as the success signal.
+    if 200 <= status < 300:
+        return "PROVIDER_ACCEPTED_2XX"
+
+    raise CallMeBotRejected(f"CallMeBot HTTP inatteso {status}")
 
 
 def _send_once(message: str) -> str:
@@ -66,7 +73,7 @@ def _send_once(message: str) -> str:
 
 
 def send_callmebot(message: str, *, attempts: int = 3, retry_delay_seconds: float = 5.0) -> str:
-    """Send one WhatsApp alert and return only after provider acceptance.
+    """Send one WhatsApp alert and return after provider acceptance.
 
     Network/transport failures are retried. Explicit provider rejection is not
     retried because invalid credentials/authorization do not improve by waiting.
