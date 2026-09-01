@@ -3,8 +3,8 @@ name: Alert Center
 on:
   workflow_dispatch:
   schedule:
-    # Ogni 30 minuti nella finestra UTC che copre le sessioni ITALIA + USA.
-    - cron: '*/30 7-21 * * 1-5'
+    # Ogni 10 minuti nella finestra UTC che copre le sessioni ITALIA + USA.
+    - cron: '*/10 7-21 * * 1-5'
 
 permissions:
   contents: read
