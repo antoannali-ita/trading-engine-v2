@@ -1,0 +1,42 @@
+name: Audit Platform Location
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/audit-platform-location.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Count Platform alerts without exposing credentials
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          from urllib.parse import urlsplit
+          base=os.environ['SUPABASE_URL'].rstrip('/')
+          key=os.environ['SUPABASE_SECRET_KEY']
+          req=urllib.request.Request(base+'/rest/v1/alerts?select=id,status,market&limit=3000',headers={
+              'apikey':key,'Authorization':f'Bearer {key}','Accept-Profile':'alert_platform'})
+          with urllib.request.urlopen(req,timeout=30) as response:
+              rows=json.loads(response.read().decode())
+          counts={}
+          markets={}
+          for row in rows:
+              counts[row.get('status')]=counts.get(row.get('status'),0)+1
+              markets[row.get('market')]=markets.get(row.get('market'),0)+1
+          print('SUPABASE_HOST',urlsplit(base).hostname)
+          print('PLATFORM_ALERT_COUNT',len(rows))
+          print('STATUS_COUNTS',json.dumps(counts,sort_keys=True))
+          print('MARKET_COUNTS',json.dumps(markets,sort_keys=True))
+          PY
