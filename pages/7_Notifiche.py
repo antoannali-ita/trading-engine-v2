@@ -50,10 +50,14 @@ def extract_message(payload):
 def platform_alert_rows() -> list[dict]:
     """Read the single alert source of truth."""
     try:
+        table = get_client().schema("alert_platform").table("alerts")
+        now = datetime.now(timezone.utc).isoformat()
+        # Repair alerts created by the first Platform form version: NULL made
+        # them invisible to claim_due_alerts and ITALY did not match ITALIA.
+        table.update({"next_check_at": now}).eq("status", "ACTIVE").is_("next_check_at", "null").execute()
+        table.update({"market": "ITALIA", "next_check_at": now}).eq("market", "ITALY").execute()
         return (
-            get_client()
-            .schema("alert_platform")
-            .table("alerts")
+            table
             .select(
                 "id,ticker,market,alert_type,threshold,threshold_min,threshold_max,status,"
                 "valid_until,next_check_at,last_price,last_price_at,last_price_provider,created_at,updated_at"
@@ -202,7 +206,7 @@ def insert_alerts(rows: list[dict]) -> int:
                 "threshold": row["trigger_level"],
                 "status": "ACTIVE",
                 "valid_until": row["expires_at"],
-                "next_check_at": None,
+                "next_check_at": datetime.now(timezone.utc).isoformat(),
             }
         )
     if not payloads:
@@ -312,7 +316,7 @@ with tab_new:
     with st.form("new_alert", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
         ticker = c1.text_input("Ticker", placeholder="MSFT").strip().upper()
-        market = c2.selectbox("Mercato", ["USA", "ITALY"])
+        market = c2.selectbox("Mercato", ["USA", "ITALIA"])
         direction = c3.selectbox("Condizione", ["Prezzo >=", "Prezzo <="])
 
         c4, c5 = st.columns(2)
@@ -343,7 +347,7 @@ with tab_new:
                         "threshold": trigger_level,
                         "status": "ACTIVE",
                         "valid_until": expires,
-                        "next_check_at": None,
+                        "next_check_at": datetime.now(timezone.utc).isoformat(),
                     }
                     get_client().schema("alert_platform").table("alerts").insert(payload).execute()
                     st.success(f"Alert inserito: {ticker} {direction} {trigger_level:.4f}")
