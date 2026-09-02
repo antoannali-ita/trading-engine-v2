@@ -121,21 +121,90 @@ def _restore_legacy_alerts_if_needed(client, now: datetime) -> int:
         seen.add(key)
         current = existing_by_key.get(key)
         payload = _legacy_to_platform_row(legacy, now)
-        if current is None:
-            platform.insert(payload).execute()
-            restored += 1
-        elif str(current.get("status") or "").upper() == "V3_FAILED":
-            platform.update({
-                "status": "ACTIVE",
-                "valid_until": payload["valid_until"],
-                "next_check_at": payload["next_check_at"],
-                "updated_at": now.isoformat(),
-            }).eq("id", current["id"]).execute()
-            restored += 1
+        try:
+            if current is None:
+                platform.insert(payload).execute()
+                restored += 1
+            elif str(current.get("status") or "").upper() == "V3_FAILED":
+                platform.update({
+                    "status": "ACTIVE",
+                    "valid_until": payload["valid_until"],
+                    "next_check_at": payload["next_check_at"],
+                    "updated_at": now.isoformat(),
+                }).eq("id", current["id"]).execute()
+                restored += 1
+        except Exception as exc:
+            print(f"LEGACY_PLATFORM_INSERT_BLOCKED {type(exc).__name__}: {exc}")
+            break
 
     if restored:
         print(f"LEGACY_ALERTS_RESTORED count={restored}")
     return restored
+
+
+def _load_legacy_runtime_alerts(client, now: datetime) -> list[dict]:
+    """Read archived rules as an emergency runtime source until DB grants are fixed."""
+    rows = (
+        client.table("trading_alerts_legacy_archive")
+        .select("alert_id,ticker,market,condition_type,trigger_level,status,note,expires_at,last_price,last_checked_at,created_at,updated_at")
+        .in_("status", ["ACTIVE", "ERROR"])
+        .order("updated_at", desc=True)
+        .limit(5000)
+        .execute().data
+        or []
+    )
+    result: list[dict] = []
+    seen: set[tuple[str, str, str, float | None]] = set()
+    for row in rows:
+        expires = _parse_dt(row.get("expires_at"))
+        if expires is not None and expires <= now:
+            continue
+        key = _legacy_key(row)
+        if not key[1] or key[2] not in {"PRICE_ABOVE", "PRICE_BELOW"} or key[3] is None or key in seen:
+            continue
+        seen.add(key)
+        result.append({
+            "id": str(row.get("alert_id") or ""),
+            "ticker": key[1],
+            "market": key[0],
+            "alert_type": key[2],
+            "threshold": key[3],
+            "threshold_min": None,
+            "threshold_max": None,
+            "status": "ACTIVE",
+            "valid_until": expires.isoformat() if expires else (now + timedelta(days=30)).isoformat(),
+            "next_check_at": None,
+            "last_price": row.get("last_price"),
+            "last_price_at": row.get("last_checked_at"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+            "_legacy": True,
+        })
+    print(f"LEGACY_RUNTIME_FALLBACK active={len(result)}")
+    return result
+
+
+def _persist_alert(client, platform_table, alert: dict, values: dict) -> None:
+    alert_id = str(alert.get("id") or "")
+    if not alert.get("_legacy"):
+        platform_table.update(values).eq("id", alert_id).execute()
+        return
+
+    legacy_values: dict = {}
+    if "status" in values:
+        status = str(values["status"])
+        legacy_values["status"] = "ERROR" if status == "V3_FAILED" else status
+    if "last_price" in values:
+        legacy_values["last_price"] = values["last_price"]
+    if "last_price_at" in values:
+        legacy_values["last_checked_at"] = values["last_price_at"]
+    if "updated_at" in values:
+        legacy_values["updated_at"] = values["updated_at"]
+    if legacy_values:
+        try:
+            client.table("trading_alerts_legacy_archive").update(legacy_values).eq("alert_id", alert_id).execute()
+        except Exception as exc:
+            print(f"LEGACY_STATUS_WARNING {type(exc).__name__}: {exc}")
 
 
 def _last_price(ticker: str, market: str) -> float:
@@ -279,6 +348,8 @@ def process_active_alerts() -> dict[str, int]:
         .execute().data
         or []
     )
+    if not rows:
+        rows = _load_legacy_runtime_alerts(client, now)
 
     stats = {
         "active": len(rows),
@@ -299,14 +370,14 @@ def process_active_alerts() -> dict[str, int]:
         try:
             alert_type = str(alert.get("alert_type") or "").upper()
             if alert_type not in SUPPORTED_TYPES:
-                table.update({"status": "V3_FAILED", "updated_at": now.isoformat()}).eq("id", alert_id).execute()
+                _persist_alert(client, table, alert, {"status": "V3_FAILED", "updated_at": now.isoformat()})
                 stats["errors"] += 1
                 print(f"ALERT_UNSUPPORTED {ticker} type={alert_type}")
                 continue
 
             valid_until = _parse_dt(alert.get("valid_until"))
             if valid_until is not None and valid_until <= now:
-                table.update({"status": "EXPIRED", "updated_at": now.isoformat()}).eq("id", alert_id).execute()
+                _persist_alert(client, table, alert, {"status": "EXPIRED", "updated_at": now.isoformat()})
                 stats["expired"] += 1
                 continue
 
@@ -323,15 +394,15 @@ def process_active_alerts() -> dict[str, int]:
             price = _last_price(ticker, market)
             stats["checked"] += 1
             next_check_at = (now + timedelta(minutes=25)).isoformat()
-            table.update(
+            _persist_alert(client, table, alert,
                 {
                     "last_price": price,
                     "last_price_at": now.isoformat(),
                     "last_price_provider": "YFINANCE",
                     "next_check_at": next_check_at,
                     "updated_at": now.isoformat(),
-                }
-            ).eq("id", alert_id).execute()
+                },
+            )
 
             fired, condition = _triggered(alert, price)
             if not fired:
@@ -339,7 +410,7 @@ def process_active_alerts() -> dict[str, int]:
 
             stats["triggered"] += 1
             if _recent_sent_for_alert(client, alert_id):
-                table.update({"status": "TRIGGERED", "updated_at": now.isoformat()}).eq("id", alert_id).execute()
+                _persist_alert(client, table, alert, {"status": "TRIGGERED", "updated_at": now.isoformat()})
                 _log_notification(client, alert, price, condition, "SKIPPED", "ALERT_DUPLICATE_SUPPRESSED")
                 stats["suppressed"] += 1
                 continue
@@ -348,36 +419,36 @@ def process_active_alerts() -> dict[str, int]:
                 send_callmebot(_message(alert, price, condition))
             except Exception as exc:
                 retry_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-                table.update({
+                _persist_alert(client, table, alert, {
                     "status": "ACTIVE",
                     "next_check_at": retry_at,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
-                }).eq("id", alert_id).execute()
+                })
                 stats["errors"] += 1
                 print(f"ALERT_NOTIFICATION_RETRY {ticker} {type(exc).__name__}: {exc}")
                 continue
             sent_at = datetime.now(timezone.utc).isoformat()
             _log_notification(client, alert, price, condition, "SENT", "ALERT_TRIGGERED")
-            table.update(
+            _persist_alert(client, table, alert,
                 {
                     "status": "TRIGGERED",
                     "last_price": price,
                     "last_price_at": sent_at,
                     "last_price_provider": "YFINANCE",
                     "updated_at": sent_at,
-                }
-            ).eq("id", alert_id).execute()
+                },
+            )
             stats["sent"] += 1
             print(f"ALERT_SENT {ticker} type={alert_type} price={price:.4f}")
         except Exception as exc:
             stats["errors"] += 1
             print(f"ALERT_ERROR {ticker} id={alert_id} {type(exc).__name__}: {exc}")
             try:
-                table.update({
+                _persist_alert(client, table, alert, {
                     "status": "ACTIVE",
                     "next_check_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
-                }).eq("id", alert_id).execute()
+                })
             except Exception as update_exc:
                 print(f"ALERT_ERROR_STATUS_UPDATE_FAILED {ticker} {type(update_exc).__name__}: {update_exc}")
 
