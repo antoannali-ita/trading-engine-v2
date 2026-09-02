@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from alert_center.engine import evaluate_alert, is_equivalent_recent_notification
+from alert_center.runner import _legacy_to_platform_row, _market_session_open, _triggered
 
 
 def test_price_above_and_below():
@@ -73,3 +74,26 @@ def test_alert_center_requires_same_condition_when_not_fineco():
         "payload": {"source": "ALERT_CENTER", "condition_type": "PRICE_ABOVE", "trigger_level": 108.90},
     }]
     assert not is_equivalent_recent_notification(alert, notifications, now=now)
+
+
+def test_platform_trigger_types_and_italia_market_alias():
+    assert _triggered({"alert_type": "PRICE_ABOVE", "threshold": 100}, 101)[0]
+    assert _triggered({"alert_type": "PRICE_BELOW", "threshold": 100}, 99)[0]
+    assert _triggered({"alert_type": "ENTRY_ZONE", "threshold_min": 98, "threshold_max": 102}, 100)[0]
+    assert _market_session_open("ITALIA", datetime(2026, 9, 2, 10, 0, tzinfo=timezone.utc))
+
+
+def test_legacy_alert_maps_to_platform_source_of_truth():
+    now = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
+    row = _legacy_to_platform_row({
+        "ticker": "csco",
+        "market": "ITALY",
+        "condition_type": "PRICE_BELOW",
+        "trigger_level": "108.90",
+        "expires_at": "2026-10-01T00:00:00+00:00",
+    }, now)
+    assert row["ticker"] == "CSCO"
+    assert row["market"] == "ITALIA"
+    assert row["alert_type"] == "PRICE_BELOW"
+    assert row["threshold"] == 108.9
+    assert row["status"] == "ACTIVE"
