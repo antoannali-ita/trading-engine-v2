@@ -5,6 +5,8 @@ on:
   push:
     paths:
       - ".github/workflows/alert_center.yml"
+      - "alert_center/**"
+      - "fineco_alert_bridge/whatsapp.py"
   workflow_run:
     workflows:
       - "Fast Monitor v2"
@@ -39,7 +41,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: python -m system_health.run_log start --module ALERT_CENTER --component price-alerts
-      - name: Check Alert Center rules and send WhatsApp only in regular market session
+      - name: Restore cutover alerts, check rules and send WhatsApp
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
