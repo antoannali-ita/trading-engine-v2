@@ -2,9 +2,17 @@ name: Alert Center
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/alert_center.yml"
+  workflow_run:
+    workflows:
+      - "Fast Monitor v2"
+      - "Trading Engine V2 Orchestrator"
+    types: [completed]
   schedule:
-    # Ogni 10 minuti nella finestra UTC che copre le sessioni ITALIA + USA.
-    - cron: '*/10 7-21 * * 1-5'
+    # Primario ogni 10 minuti, sfalsato dai minuti tondi per ridurre ritardi/dropped schedule GitHub.
+    - cron: '3,13,23,33,43,53 7-21 * * 1-5'
 
 permissions:
   contents: read
@@ -15,6 +23,7 @@ concurrency:
 
 jobs:
   check-alerts:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
