@@ -12,6 +12,7 @@ from fineco_alert_bridge.whatsapp import send_callmebot
 
 MARKET_HOURS = {
     "ITALY": {"timezone": "Europe/Rome", "open": time(9, 0), "close": time(17, 30)},
+    "ITALIA": {"timezone": "Europe/Rome", "open": time(9, 0), "close": time(17, 30)},
     "USA": {"timezone": "America/New_York", "open": time(9, 30), "close": time(16, 0)},
 }
 
@@ -40,9 +41,101 @@ def _client():
 
 def _yf_symbol(ticker: str, market: str) -> str:
     ticker = ticker.upper().strip()
-    if market.upper() == "ITALY" and not ticker.endswith(".MI"):
+    if market.upper() in {"ITALY", "ITALIA"} and not ticker.endswith(".MI"):
         return f"{ticker}.MI"
     return ticker
+
+
+def _legacy_key(row: dict) -> tuple[str, str, str, float | None]:
+    market = str(row.get("market") or "USA").upper()
+    if market == "ITALY":
+        market = "ITALIA"
+    return (
+        market,
+        str(row.get("ticker") or "").upper().strip(),
+        str(row.get("condition_type") or row.get("alert_type") or "").upper(),
+        _num(row.get("trigger_level") if "trigger_level" in row else row.get("threshold")),
+    )
+
+
+def _legacy_to_platform_row(row: dict, now: datetime) -> dict:
+    market, ticker, alert_type, threshold = _legacy_key(row)
+    expires = _parse_dt(row.get("expires_at")) or now + timedelta(days=30)
+    return {
+        "ticker": ticker,
+        "market": market,
+        "alert_type": alert_type,
+        "condition": str(row.get("note") or "Migrazione Alert Center legacy"),
+        "threshold": threshold,
+        "status": "ACTIVE",
+        "priority": 70,
+        "notification_policy": "BUY_PREBUY_HIGH",
+        "valid_until": expires.isoformat(),
+        "next_check_at": now.isoformat(),
+    }
+
+
+def _restore_legacy_alerts_if_needed(client, now: datetime) -> int:
+    """Recover the Alert Center rules archived during the platform cutover.
+
+    Migration 014 archived and dropped the legacy table before its live rules were
+    copied to alert_platform.alerts.  The cutover therefore left the new runtime
+    source empty.  Recovery is idempotent and only restores still-valid ACTIVE or
+    ERROR rules that do not already exist in the platform.
+    """
+    platform = client.schema("alert_platform").table("alerts")
+    existing = (
+        platform.select("id,market,ticker,alert_type,threshold,status")
+        .limit(5000)
+        .execute().data
+        or []
+    )
+    active = [row for row in existing if str(row.get("status") or "").upper() == "ACTIVE"]
+    if active:
+        return 0
+
+    try:
+        archived = (
+            client.table("trading_alerts_legacy_archive")
+            .select("alert_id,ticker,market,condition_type,trigger_level,status,note,expires_at,updated_at")
+            .in_("status", ["ACTIVE", "ERROR"])
+            .order("updated_at", desc=True)
+            .limit(5000)
+            .execute().data
+            or []
+        )
+    except Exception as exc:
+        print(f"LEGACY_RECOVERY_WARNING {type(exc).__name__}: {exc}")
+        return 0
+
+    existing_by_key = {_legacy_key(row): row for row in existing}
+    restored = 0
+    seen: set[tuple[str, str, str, float | None]] = set()
+    for legacy in archived:
+        expires = _parse_dt(legacy.get("expires_at"))
+        if expires is not None and expires <= now:
+            continue
+        key = _legacy_key(legacy)
+        if not key[1] or key[2] not in {"PRICE_ABOVE", "PRICE_BELOW"} or key[3] is None or key in seen:
+            continue
+        seen.add(key)
+        current = existing_by_key.get(key)
+        payload = _legacy_to_platform_row(legacy, now)
+        if current is None:
+            platform.insert(payload).execute()
+            restored += 1
+        elif str(current.get("status") or "").upper() == "V3_FAILED":
+            platform.update({
+                "status": "ACTIVE",
+                "valid_until": payload["valid_until"],
+                "next_check_at": payload["next_check_at"],
+                "updated_at": now.isoformat(),
+            }).eq("id", current["id"]).execute()
+            restored += 1
+
+    if restored:
+        print(f"LEGACY_ALERTS_RESTORED count={restored}")
+    return restored
 
 
 def _last_price(ticker: str, market: str) -> float:
@@ -173,6 +266,8 @@ def process_active_alerts() -> dict[str, int]:
     now = datetime.now(timezone.utc)
     table = client.schema("alert_platform").table("alerts")
 
+    restored = _restore_legacy_alerts_if_needed(client, now)
+
     rows = (
         table.select(
             "id,ticker,market,alert_type,threshold,threshold_min,threshold_max,status,"
@@ -195,6 +290,7 @@ def process_active_alerts() -> dict[str, int]:
         "not_due": 0,
         "skipped_session": 0,
         "errors": 0,
+        "restored": restored,
     }
 
     for alert in rows:
@@ -248,7 +344,18 @@ def process_active_alerts() -> dict[str, int]:
                 stats["suppressed"] += 1
                 continue
 
-            send_callmebot(_message(alert, price, condition))
+            try:
+                send_callmebot(_message(alert, price, condition))
+            except Exception as exc:
+                retry_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+                table.update({
+                    "status": "ACTIVE",
+                    "next_check_at": retry_at,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", alert_id).execute()
+                stats["errors"] += 1
+                print(f"ALERT_NOTIFICATION_RETRY {ticker} {type(exc).__name__}: {exc}")
+                continue
             sent_at = datetime.now(timezone.utc).isoformat()
             _log_notification(client, alert, price, condition, "SENT", "ALERT_TRIGGERED")
             table.update(
@@ -266,7 +373,11 @@ def process_active_alerts() -> dict[str, int]:
             stats["errors"] += 1
             print(f"ALERT_ERROR {ticker} id={alert_id} {type(exc).__name__}: {exc}")
             try:
-                table.update({"status": "V3_FAILED", "updated_at": now.isoformat()}).eq("id", alert_id).execute()
+                table.update({
+                    "status": "ACTIVE",
+                    "next_check_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", alert_id).execute()
             except Exception as update_exc:
                 print(f"ALERT_ERROR_STATUS_UPDATE_FAILED {ticker} {type(update_exc).__name__}: {update_exc}")
 
