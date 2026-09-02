@@ -7,8 +7,7 @@
     {"market":"NYSE","ticker":"TAP","name":"MOLSON COORS RG-B","quantity":45,"avg_price_usd":64.98782,"target_usd":92.00,"snapshot_price_usd":39.77},
     {"market":"NASDAQ","ticker":"PYPL","name":"PAYPAL HOLDINGS","quantity":50,"avg_price_usd":62.15903,"target_usd":85.00,"snapshot_price_usd":52.755},
     {"market":"NASDAQ","ticker":"CSCO","name":"CISCO SYSTEMS","quantity":44,"avg_price_usd":110.13367,"target_usd":124.50,"snapshot_price_usd":109.24},
-    {"market":"BIT","ticker":"BPE.MI","name":"BPER BANCA","quantity":140,"avg_price_usd":16.51,"target_usd":17.62,"snapshot_price_usd":16.53,"quote_currency":"EUR","snapshot_price_native":14.20},
-    {"market":"BIT","ticker":"LTMC.MI","name":"LOTTOMATICA GR","quantity":59,"avg_price_usd":29.29,"target_usd":32.77,"snapshot_price_usd":29.15,"quote_currency":"EUR","snapshot_price_native":25.04}
+    {"market":"BIT","ticker":"BPE.MI","name":"BPER BANCA","quantity":140,"avg_price_usd":16.51,"target_usd":17.62,"snapshot_price_usd":16.53,"quote_currency":"EUR","snapshot_price_native":14.20}
   ],
   "fx_positions": [
     {"pair":"USD/EUR","quantity_usd":18000.0,"avg_rate_eur_per_usd":0.93,"target_rate_eur_per_usd":0.95,"snapshot_rate_eur_per_usd":0.86}
