@@ -21,6 +21,7 @@ TABLES = [
     "lab_calibration_results",
     "lab_strategy_variants",
     "lab_strategy_evaluations",
+    "lab_evolution_runs",
     "core_high_conviction_signals",
     "engine_runs",
     "signals",
