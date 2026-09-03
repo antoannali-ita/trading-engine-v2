@@ -1,5 +1,6 @@
 {
   "as_of_source": "User-provided Fineco portfolio snapshot",
+  "as_of_utc": "2026-09-03T11:25:00Z",
   "notes": "Quantities are current residual positions. Live prices and FX are refreshed by the dashboard; snapshot prices are fallback only. quote_currency identifies the native Yahoo Finance quote currency when it is not USD.",
   "equities": [
     {"market":"NASDAQ","ticker":"ARRY","name":"ARRAY TECH","quantity":136,"avg_price_usd":22.99523,"target_usd":42.00,"snapshot_price_usd":4.405},
