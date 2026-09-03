@@ -1,6 +1,21 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
+
+
+def _cluster_field(cluster: Any, name: str, default: Any = None) -> Any:
+    if isinstance(cluster, dict):
+        return cluster.get(name, default)
+    return getattr(cluster, name, default)
+
+
+def _cluster_containing(symbol: str, clusters: Sequence[Any]) -> Any | None:
+    upper = symbol.upper()
+    for cluster in clusters:
+        members = _cluster_field(cluster, "members")
+        if members and upper in {str(m).upper() for m in members}:
+            return cluster
+    return None
 
 
 def _tier_check(name: str, failures: list[str], *, research_only: bool = False) -> dict[str, Any]:
@@ -162,13 +177,21 @@ def lab_portfolio_fit(
     max_new_buys: int = 12,
     max_active_positions: int = 80,
     max_active_per_strategy: int = 24,
+    correlation_clusters: Sequence[Any] | None = None,
+    correlated_exposure_warn_at: int = 3,
 ) -> dict[str, Any]:
     """Portfolio guardrail for research paper trading.
 
     The same ticker may be held by different strategies because comparing those
     independent virtual trades is the point of the Laboratory. The shared
-    underlying is retained through risk_key in signal/position details so a
-    future Portfolio Risk Engine can aggregate correlated exposure correctly.
+    underlying is retained through risk_key in signal/position details.
+
+    correlation_clusters (from lab.correlation.correlation_clusters) is the
+    Portfolio Risk Engine referenced above: when provided, correlated exposure
+    across DIFFERENT symbols in the same strongly-correlated cluster is
+    surfaced under "correlated_exposure" for dashboards/research. This is
+    informational only and never blocks eligibility, so it does not shrink the
+    Laboratory's learning sample.
     """
     failed: list[str] = []
     active = [
@@ -191,10 +214,29 @@ def lab_portfolio_fit(
     if opened_this_run >= max_new_buys:
         failed.append("MAX_NEW_LAB_BUYS_THIS_RUN")
 
+    correlated_exposure: dict[str, Any] | None = None
+    warnings: list[str] = []
+    if correlation_clusters:
+        cluster = _cluster_containing(symbol, correlation_clusters)
+        if cluster is not None:
+            members = {str(m).upper() for m in _cluster_field(cluster, "members", [])}
+            correlated_positions = [p for p in active if str(p.get("symbol") or "").upper() in members]
+            other_symbols = sorted({str(p.get("symbol") or "").upper() for p in correlated_positions} - {symbol.upper()})
+            correlated_exposure = {
+                "cluster_members": sorted(members),
+                "cluster_avg_abs_correlation": round(float(_cluster_field(cluster, "average_abs_correlation", 0.0)), 3),
+                "already_held_in_cluster": other_symbols,
+                "already_held_count": len(other_symbols),
+            }
+            if len(other_symbols) >= correlated_exposure_warn_at:
+                warnings.append("CORRELATED_CLUSTER_EXPOSURE")
+
     return {
         "eligible": not failed,
         "failed": failed,
+        "warnings": warnings,
         "active_total": len(active),
         "active_strategy": len(strategy_active),
-        "model": "LAB_PORTFOLIO_V2_RESEARCH",
+        "correlated_exposure": correlated_exposure,
+        "model": "LAB_PORTFOLIO_V2_RESEARCH" if correlation_clusters is None else "LAB_PORTFOLIO_V2_1_WITH_CORRELATION",
     }

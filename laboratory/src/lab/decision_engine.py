@@ -266,3 +266,27 @@ def regime_v1(spy_enriched: pd.DataFrame) -> dict[str, Any]:
         "spy_sma50": sma50,
         "spy_sma200": sma200,
     }
+
+
+# Regime-adjusted stop widths (Portfolio Risk Engine v1). The base 2.0x ATR
+# stop is computed from a 14-day ATR that lags a genuine volatility regime
+# shift by design (it is a moving average). In HIGH-volatility regimes the
+# realized range widens faster than a 14-day ATR can catch up, so a fixed
+# 2.0x multiplier systematically sits too close to price and gets clipped by
+# noise rather than a real thesis failure. This widens the stop only in
+# HIGH-volatility regimes and never tightens it in normal/unknown regimes, so
+# it can only reduce noise-driven stop-outs, never increase risk beyond the
+# existing baseline.
+REGIME_STOP_MULTIPLIERS: dict[str, float] = {
+    "BULL_QUIET": 2.0,
+    "RANGE_NEUTRAL": 2.0,
+    "BULL_VOLATILE": 2.5,
+    "BEAR_HIGH_VOL": 2.5,
+    "UNKNOWN": 2.0,
+}
+
+
+def regime_adjusted_stop_multiplier(regime_state: str | None, *, base: float = 2.0) -> float:
+    """Never returns less than `base`: this can only widen the stop, never tighten it."""
+    state = str(regime_state or "UNKNOWN").upper()
+    return max(base, REGIME_STOP_MULTIPLIERS.get(state, base))

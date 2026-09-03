@@ -18,11 +18,13 @@ from lab.decision_engine import (
     data_quality_check,
     earnings_distance_days,
     net_rr,
+    regime_adjusted_stop_multiplier,
     regime_v1,
     risk_based_qty,
     trade_eligibility,
     trade_score,
 )
+from lab.correlation import correlation_clusters as compute_correlation_clusters
 from lab.indicators import enrich_prices
 from lab.market_data import MarketDataRequest, download_prices
 from lab.paper_policy import classify_paper_tier, lab_portfolio_fit
@@ -338,6 +340,23 @@ def main() -> int:
 
     print(f"market_regime={market_regime.get('state', 'UNKNOWN')}")
 
+    # Portfolio Risk Engine (research-only, never blocks eligibility): downloads
+    # here are served from the same in-process cache used by the main loop
+    # below, so this preliminary pass costs no extra network round-trips once
+    # the main loop reaches each symbol.
+    price_history: dict[str, "pd.Series"] = {}
+    for symbol in configured_symbols:
+        try:
+            hist = download_prices(MarketDataRequest(symbol=symbol, start="2024-01-01"))
+            price_history[symbol] = hist["Close"]
+        except Exception as exc:
+            print(f"correlation price history {symbol}: {exc}")
+    try:
+        active_clusters = compute_correlation_clusters(price_history)
+    except Exception as exc:
+        active_clusters = []
+        print(f"correlation_clusters computation failed (non-blocking): {exc}")
+
     for symbol in configured_symbols:
         try:
             prices = download_prices(MarketDataRequest(symbol=symbol, start="2024-01-01"))
@@ -362,7 +381,8 @@ def main() -> int:
 
                 ideal_entry, trigger, setup_note = _entry_and_trigger(strategy, last)
                 execution_entry = price
-                risk_per_share = 2.0 * atr
+                stop_atr_mult = regime_adjusted_stop_multiplier(market_regime.get("state"))
+                risk_per_share = stop_atr_mult * atr
                 stop = execution_entry - risk_per_share
                 tp1 = execution_entry + 1.5 * risk_per_share
                 tp2 = execution_entry + 2.5 * risk_per_share
@@ -409,6 +429,7 @@ def main() -> int:
                     opened_this_run=0, max_new_buys=max_new_buys,
                     max_active_positions=max_active,
                     max_active_per_strategy=max_per_strategy,
+                    correlation_clusters=active_clusters,
                 )
                 state = _decision_state(
                     strategy_score, trigger, paper_policy, dq, symbol in BENCHMARK_ETFS,
@@ -426,6 +447,7 @@ def main() -> int:
                     "portfolio_eligibility": preliminary_portfolio,
                     "data_quality": dq,
                     "market_regime": market_regime,
+                    "stop_atr_mult": stop_atr_mult,
                     "trigger": trigger,
                     "setup_note": setup_note,
                     "ideal_entry": ideal_entry,
@@ -512,6 +534,7 @@ def main() -> int:
             open_positions=open_positions, opened_this_run=opened,
             max_new_buys=max_new_buys, max_active_positions=max_active,
             max_active_per_strategy=max_per_strategy,
+            correlation_clusters=active_clusters,
         )
         if not portfolio_gate.get("eligible"):
             continue
